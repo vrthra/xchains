@@ -97,6 +97,8 @@ class Program:
                 if l == 0:
                     # No active successors. Go back one step
                     log("..")
+                    s = self.extra_states.pop()
+                    states.append(s)
                     time.sleep(5)
                 states.extend(my_succ)
                 ls = len(states)
