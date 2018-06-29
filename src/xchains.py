@@ -7,17 +7,20 @@ import random
 import claripy
 from ptpython.repl import embed
 
-Max_Input_Len = 10
+Max_Input_Len = 30
 
-def log(v): print(v)
+def log(v): print "\t", v
+def configure(repl): repl.confirm_exit = False
 
 class Program:
     def __init__(self, exe):
         self.exe = exe
         # Use auto_load_libs = False to use symbolic summaries of libs
         self.project = angr.Project(exe, load_options={'auto_load_libs': False})
-        self.arg1a = [claripy.BVS('sym_arg_%s' % str(i), 8)
-                for i in range(0, Max_Input_Len)]
+        arg1k = ['sym_arg_%s' % str(i) for i in range(0, Max_Input_Len)]
+        self.arg1h = {k:claripy.BVS(k, 8) for k in arg1k}
+        self.arg1h_ = {self.arg1h[k].args[0]:k for k in arg1k}
+        self.arg1a = [self.arg1h[k] for k in arg1k]
 
         # self.arg1 = claripy.BVS('sym_arg', 8 * )
         self.arg1 = reduce(lambda x,y: x.concat(y), self.arg1a)
@@ -27,9 +30,21 @@ class Program:
         self.cfg = self.project.analyses.CFG(fail_fast=True)
         self.success_fn = self.getFuncAddr('success')
 
+        self.last_constraint_len = len(self.istate.solver.constraints)
+        self.state = self.istate
+
+        self.icdb = self.get_constraint_db(self.state)
+        self.cdb = self.icdb
+        self.states = []
+        self.extra_states = []
+
+    def retrieve_char_constraints(self, state):
+        constraints = {}
+        return [state.solver.variables(c) for c in state.solver.constraints]
+
     def make_printable(self, char):
         self.istate.add_constraints(char < 128)
-        self.istate.add_constraints(char > 32)
+        self.istate.add_constraints(char > 31)
 
     def getFuncAddr(self, fname):
         found = [addr for addr,func in self.cfg.kb.functions.iteritems()
@@ -42,9 +57,9 @@ class Program:
             raise Exception("No address found for function : "+fname)
 
     def pop_what(self, states):
+        assert states
         i = random.randint(0, len(states)-1)
-        state = states[i]
-        states.pop(i)
+        state = states.pop(i)
 
         # TODO: what we want to do here:
         # if the state is tainted,
@@ -55,50 +70,106 @@ class Program:
         # in the stack.
         #if is_tainted(state):
         #else:
+        self.state = state
+        self.states = states
         return state, states
 
-    def gen_chains(self, state=None):
-        states = []
-        i = 0
-        if not state: state = self.istate
-        while True:
-            log("%d states: %d constraints: %d" % (i, len(states), len(state.solver.constraints)))
-            i += 1
-            if state.addr == self.success_fn: return state
-            succ = state.step()
-            my_succ = succ.successors
-            l = len(my_succ)
-            log("successors: %d" % l)
-            time.sleep(1)
-            if l == 0:
-                # No active successors. Go back one step
-                log("..")
-            states.extend(my_succ)
-            ls = len(states)
-            if ls == 0:
-                return None
-            #elif ls == 1:
-            #    state = states[0]
-            #    states.pop()
-            else:
-                state, states = self.pop_what(states)
-                # were there any constraints?
-                if len(state.solver.constraints) > 0:
-                    # was it a constraint on input?
-                    # then concretize the last constraint.
-                    assert len(state.solver.constraints[-1].args) == 2
-                    assert not state.solver.constraints[-1].args[0].concrete
-                    assert state.solver.constraints[-1].args[1].concrete
+    def print_constraints(self):
+        for i,c in enumerate(self.state.solver.constraints):
+            v = list(self.state.solver.variables(c))
+            print "?\t", i, c, str(v)
 
-                    bv = state.solver.constraints[-1].args[0]
-                    for i in bv.recursive_children_asts:
-                        if (repr(i) == repr(self.arg1.args[0])):
-                            log("tainted")
-                            return state
+    def gen_chains(self, state=None):
+        states = self.states if self.states else []
+        num = 0
+        if not state: state = self.state
+        while True:
+            try:
+                log("%d states: %d constraints: %d" % (num, len(states), len(state.solver.constraints)))
+                num += 1
+                if state.addr == self.success_fn:
+                    return ('success',state)
+                succ = state.step()
+                my_succ = succ.successors
+                l = len(my_succ)
+                log("successors: %d" % l)
+                # time.sleep(1)
+                if l == 0:
+                    # No active successors. Go back one step
+                    log("..")
+                    time.sleep(5)
+                states.extend(my_succ)
+                ls = len(states)
+                if ls == 0:
+                    return ('no_states', None)
+
+                state, states = self.pop_what(states)
+                # self.print_constraints()
+
+                # were there any constraints?
+                if len(state.solver.constraints) > self.last_constraint_len:
+                    print "new constraints: %d" % (len(state.solver.constraints) - self.last_constraint_len)
+
+                    self.last_constraint_len = len(state.solver.constraints)
+                    self.extra_states.extend(self.states)
+                    self.states = []
+                    return ('constraint_update', self.state)
+            except angr.errors.SimUnsatError, ue:
+                log('unsat.. %s' % str(ue))
+                state, states = self.pop_what(states)
+
+    def get_constraint_db(self, state):
+        constraint_db = {}
+        for vi in self.retrieve_char_constraints(self.state):
+            # there could be multiple variables in a constraint
+            # vi is a set of variables.
+            for i in vi:
+                if i in self.arg1h_:
+                    v = self.arg1h_[i]
+                    if v not in constraint_db: constraint_db[v] = 0
+                    constraint_db[v] += 1
+                else:
+                    log("? %s" % i)
+        return constraint_db
+
+    def update_constraints(self):
+        cdb_ = self.cdb
+        self.cdb = self.get_constraint_db(self.state)
+        for i in self.icdb:
+            if self.cdb[i] > cdb_[i]:
+                print "cons", i
+
+    def current_args(self):
+        for i in self.state.solver.eval_upto(self.arg1, 10, cast_to=str):
+            log(i)
 
 
 prog = Program('./bin/pexpr')
-embed(globals(), locals())
-state = prog.gen_chains()
-log(state.solver.eval_upto(prog.arg1, 10, cast_to=str))
-embed(globals(), locals())
+for i in range(100):
+    prog.update_constraints()
+    status, state = prog.gen_chains()
+    if status == 'success': break
+    if not state: break
+
+    print "status:", status
+    prog.print_constraints()
+    for i in prog.state.solver.eval_upto(prog.arg1, 10, cast_to=str):
+        log(i)
+    if len(prog.states) > 2000:
+        print "states > 2000"
+        embed(globals(), locals(), configure=configure)
+    time.sleep(1)
+prog.current_args()
+embed(globals(), locals(), configure=configure)
+
+
+
+# state = prog.gen_chains()
+# print("----------------")
+# cdb = prog.get_constraint_db(prog.state)
+# for i in cdb: print i, cdb[i]
+# embed(globals(), locals(), configure=configure)
+# #for i in state.solver.eval_upto(prog.arg1, 10, cast_to=str):
+# #    log(i)
+# state1 = prog.gen_chains(state)
+# embed(globals(), locals())
