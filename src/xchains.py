@@ -7,9 +7,9 @@ import random
 import claripy
 from ptpython.repl import embed
 
-random.seed(2)
+random.seed(sys.argv[2])
 
-Max_Input_Len = 10
+Max_Input_Len = 10000
 
 def log(v): print "\t", v
 def configure(repl): repl.confirm_exit = False
@@ -102,14 +102,14 @@ class Program:
         if not state: state = self.state
         while True:
             try:
-                log("%d states: %d constraints: %d" % (num, len(states), len(state.solver.constraints)))
+                # log("%d states: %d constraints: %d" % (num, len(states), len(state.solver.constraints)))
                 num += 1
                 if state.addr == self.success_fn:
                     return ('success',state)
                 succ = state.step()
                 my_succ = succ.successors
                 l = len(my_succ)
-                log("successors: %d" % l)
+                # log("successors: %d" % l)
                 # time.sleep(1)
                 if l == 0:
                     # No active successors. Go back one step
@@ -162,7 +162,7 @@ class Program:
 
     def print_current_args(self):
         for i in self.state.solver.eval_upto(self.arg1, 1, cast_to=str):
-            log(repr(i))
+            log(repr(i.strip('\x00\xff')))
 
 
 prog = Program(sys.argv[1])#'./bin/pexpr')
@@ -181,10 +181,10 @@ for i in range(1000):
         prog.states = states
         prog.update_checked_char()
         print prog.last_char_checked
-        time.sleep(10)
+        #time.sleep(10)
 
     print "status:", status
-    prog.print_constraints()
+    # prog.print_constraints()
     prog.print_current_args()
     if len(prog.states) > 2000:
         print "states > 2000"
