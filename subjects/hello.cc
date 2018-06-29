@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-void done() {
+extern "C" void success() {
   printf("done!\n");
 }
 
@@ -24,7 +24,7 @@ int main(int argc, char* argv[0]) {
   s++;
   assert((o == 'o') || (o == 'O'));
 
-  done();
+  success();
   return 0;
 }
 

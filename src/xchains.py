@@ -7,7 +7,9 @@ import random
 import claripy
 from ptpython.repl import embed
 
-Max_Input_Len = 30
+random.seed(2)
+
+Max_Input_Len = 10
 
 def log(v): print "\t", v
 def configure(repl): repl.confirm_exit = False
@@ -25,7 +27,9 @@ class Program:
         # self.arg1 = claripy.BVS('sym_arg', 8 * )
         self.arg1 = reduce(lambda x,y: x.concat(y), self.arg1a)
         self.istate = self.project.factory.entry_state(args=[exe, self.arg1])
-        for c in self.arg1a: self.make_printable(c)
+
+        # make first character printable.
+        self.make_printable(self.arg1a[0])
 
         self.cfg = self.project.analyses.CFG(fail_fast=True)
         self.success_fn = self.getFuncAddr('success')
@@ -37,6 +41,19 @@ class Program:
         self.cdb = self.icdb
         self.states = []
         self.extra_states = []
+
+        self.last_char_checked = 0
+        self.update_checked_char()
+
+    def update_checked_char(self):
+        assert self.state.solver.min(self.arg1a[0]) > 31
+        for i in range(self.last_char_checked+1, Max_Input_Len):
+            v = self.state.solver.min(self.arg1a[i])
+            if v > 31:
+                self.last_char_checked = i
+                print "XXXXXXXXXXXXXXXx  update self.last_char_checked %d: %d:%s" % (i, v,chr(v))
+            else:
+                break
 
     def retrieve_char_constraints(self, state):
         constraints = {}
@@ -97,9 +114,7 @@ class Program:
                 if l == 0:
                     # No active successors. Go back one step
                     log("..")
-                    s = self.extra_states.pop()
-                    states.append(s)
-                    time.sleep(5)
+                    # update the last char checked here.
                 states.extend(my_succ)
                 ls = len(states)
                 if ls == 0:
@@ -108,13 +123,17 @@ class Program:
                 state, states = self.pop_what(states)
                 # self.print_constraints()
 
+                # were there any new chars?
+                if self.last_char_checked < Max_Input_Len - 1 and self.state.solver.min(self.arg1a[self.last_char_checked+1]) > 31:
                 # were there any constraints?
-                if len(state.solver.constraints) > self.last_constraint_len:
+                #if len(state.solver.constraints) > self.last_constraint_len:
                     print "new constraints: %d" % (len(state.solver.constraints) - self.last_constraint_len)
 
                     self.last_constraint_len = len(state.solver.constraints)
-                    self.extra_states.extend(self.states)
+                    if self.states:
+                        self.extra_states.append(self.states)
                     self.states = []
+                    self.update_checked_char()
                     return ('constraint_update', self.state)
             except angr.errors.SimUnsatError, ue:
                 log('unsat.. %s' % str(ue))
@@ -141,28 +160,39 @@ class Program:
             if self.cdb[i] > cdb_[i]:
                 print "cons", i
 
-    def current_args(self):
-        for i in self.state.solver.eval_upto(self.arg1, 10, cast_to=str):
-            log(i)
+    def print_current_args(self):
+        for i in self.state.solver.eval_upto(self.arg1, 1, cast_to=str):
+            log(repr(i))
 
 
-prog = Program('./bin/pexpr')
-for i in range(100):
+prog = Program(sys.argv[1])#'./bin/pexpr')
+status = None
+state = None
+for i in range(1000):
+    print(i)
     prog.update_constraints()
     status, state = prog.gen_chains()
     if status == 'success': break
-    if not state: break
+    if not state:
+        prog.print_current_args()
+        print prog.last_char_checked
+        states = prog.extra_states[-1]
+        prog.state = states.pop()
+        prog.states = states
+        prog.update_checked_char()
+        print prog.last_char_checked
+        time.sleep(10)
 
     print "status:", status
     prog.print_constraints()
-    for i in prog.state.solver.eval_upto(prog.arg1, 10, cast_to=str):
-        log(i)
+    prog.print_current_args()
     if len(prog.states) > 2000:
         print "states > 2000"
         embed(globals(), locals(), configure=configure)
-    time.sleep(1)
-prog.current_args()
-embed(globals(), locals(), configure=configure)
+    #time.sleep(1)
+print "loop done"
+prog.print_current_args()
+#embed(globals(), locals(), configure=configure)
 
 
 

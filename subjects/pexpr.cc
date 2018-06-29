@@ -21,9 +21,6 @@ private:
 	int _paren_count;
 	// Parse a number or an expression in parenthesis
 	double ParseAtom(EVAL_CHAR*& expr) {
-		// Skip spaces
-		while(*expr == ' ')
-			expr++;
 		// Handle the sign before parenthesis (or before number)
 		bool negative = false;
 		if(*expr == '-') {
@@ -69,9 +66,6 @@ private:
 	double ParseFactors(EVAL_CHAR*& expr) {
 		double num1 = ParseAtom(expr);
 		for(;;) {
-			// Skip spaces
-			while(*expr == ' ')
-				expr++;
 			// Save the operation and position
 			EVAL_CHAR op = *expr;
 			EVAL_CHAR* pos = expr;
@@ -97,9 +91,6 @@ private:
 	double ParseSummands(EVAL_CHAR*& expr) {
 		double num1 = ParseFactors(expr);
 		for(;;) {
-			// Skip spaces
-			while(*expr == ' ')
-				expr++;
 			EVAL_CHAR op = *expr;
 			if(op != '-' && op != '+')
 				return num1;

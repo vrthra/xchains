@@ -1,4 +1,4 @@
 
-pexpr:
-	g++ -o bin/pexpr -g subjects/pexpr.cc
+bin/%: subjects/%.cc
+	g++ -o bin/$* -g subjects/$*.cc
 	@nm bin/pexpr | grep success
