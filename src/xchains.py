@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import sys
+import os
 import time
 import angr
 import random
@@ -9,9 +10,9 @@ from ptpython.repl import embed
 
 random.seed(sys.argv[2])
 
-Max_Input_Len = 10000
+Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
 
-def log(v): print "\t", v
+def log(v): print >>sys.stderr, "\t", v
 def configure(repl): repl.confirm_exit = False
 
 class Program:
@@ -19,17 +20,23 @@ class Program:
         self.exe = exe
         # Use auto_load_libs = False to use symbolic summaries of libs
         self.project = angr.Project(exe, load_options={'auto_load_libs': False})
-        arg1k = ['sym_arg_%s' % str(i) for i in range(0, Max_Input_Len)]
+        arg1k = ['sym_arg_%s' % str(i) for i in range(0, Max_Input_Len+1)]
         self.arg1h = {k:claripy.BVS(k, 8) for k in arg1k}
         self.arg1h_ = {self.arg1h[k].args[0]:k for k in arg1k}
         self.arg1a = [self.arg1h[k] for k in arg1k]
+
 
         # self.arg1 = claripy.BVS('sym_arg', 8 * )
         self.arg1 = reduce(lambda x,y: x.concat(y), self.arg1a)
         self.istate = self.project.factory.entry_state(args=[exe, self.arg1])
 
         # make first character printable.
-        self.make_printable(self.arg1a[0])
+        # self.make_printable(self.arg1a[0])
+
+        # make sure that we try a maximum of 10 chars
+        self.istate.add_constraints(self.arg1a[Max_Input_Len] == 0)
+        # for i in range(Max_Input_Len-1):
+        #     self.make_printable(self.arg1a[i])
 
         self.cfg = self.project.analyses.CFG(fail_fast=True)
         self.success_fn = self.getFuncAddr('success')
@@ -40,23 +47,31 @@ class Program:
         self.icdb = self.get_constraint_db(self.state)
         self.cdb = self.icdb
         self.states = []
-        self.extra_states = []
 
         self.last_char_checked = 0
         self.update_checked_char()
 
+    def stack_depth(self, state):
+        stk = state.callstack
+        i = 0
+        while stk:
+            stk = stk.next
+            i += 1
+        return i
+
     def update_checked_char(self):
-        assert self.state.solver.min(self.arg1a[0]) > 31
+        print "???", self.last_char_checked
+        # assert self.state.solver.min(self.arg1a[0]) > 31
         for i in range(self.last_char_checked+1, Max_Input_Len):
             v = self.state.solver.min(self.arg1a[i])
             if v > 31:
+            #if not self.state.solver.solution(self.arg1a[i], 0):
                 self.last_char_checked = i
                 print "XXXXXXXXXXXXXXXx  update self.last_char_checked %d: %d:%s" % (i, v,chr(v))
             else:
                 break
 
     def retrieve_char_constraints(self, state):
-        constraints = {}
         return [state.solver.variables(c) for c in state.solver.constraints]
 
     def make_printable(self, char):
@@ -77,18 +92,6 @@ class Program:
         assert states
         i = random.randint(0, len(states)-1)
         state = states.pop(i)
-
-        # TODO: what we want to do here:
-        # if the state is tainted,
-        # duplicate the state, (in here, do not delete the state from states)
-        # solve the last constraint added, and add the solution to the
-        # one of the duplicate states, then continue with it
-        # add (not solution) to the other duplicate state, and keep it
-        # in the stack.
-        #if is_tainted(state):
-        #else:
-        self.state = state
-        self.states = states
         return state, states
 
     def print_constraints(self):
@@ -104,44 +107,53 @@ class Program:
             try:
                 # log("%d states: %d constraints: %d" % (num, len(states), len(state.solver.constraints)))
                 num += 1
-                if state.addr == self.success_fn:
-                    return ('success',state)
-                succ = state.step()
-                my_succ = succ.successors
-                l = len(my_succ)
-                # log("successors: %d" % l)
+                if state.addr == self.success_fn: return ('success',state)
+                my_succ = state.step().flat_successors # succ.successors for symbolic
+                # TODO: which succ to expand? It is here that we should randomize.
+                nsucc = len(my_succ)
                 # time.sleep(1)
-                if l == 0:
-                    # No active successors. Go back one step
-                    log("..")
-                    # update the last char checked here.
-                states.extend(my_succ)
-                ls = len(states)
-                if ls == 0:
-                    return ('no_states', None)
-
-                state, states = self.pop_what(states)
-                # self.print_constraints()
+                if nsucc == 0:
+                    log(".. %d" % len(states)) # No active successors. Go back one step -- verify if we can sat
+                    self.last_char_checked = 0
+                    self.update_checked_char()
+                    if not states: return ('no_states', None)
+                    state, states = self.pop_what(states)
+                    self.state = state
+                    self.states = states
+                elif nsucc > 1:
+                    prog.print_current_args()
+                    log("successors: %d" % nsucc)
+                    state, ss = self.pop_what(my_succ)
+                    states.extend(ss)
+                    self.states = states
+                    self.state = state
+                    # self.print_constraints()
+                    log("")
+                else:
+                    sys.stderr.write(".")
+                    state = my_succ[0]
+                    continue
 
                 # were there any new chars?
-                if self.last_char_checked < Max_Input_Len - 1 and self.state.solver.min(self.arg1a[self.last_char_checked+1]) > 31:
-                # were there any constraints?
-                #if len(state.solver.constraints) > self.last_constraint_len:
-                    print "new constraints: %d" % (len(state.solver.constraints) - self.last_constraint_len)
-
-                    self.last_constraint_len = len(state.solver.constraints)
-                    if self.states:
-                        self.extra_states.append(self.states)
-                    self.states = []
-                    self.update_checked_char()
-                    return ('constraint_update', self.state)
+                m = state.solver.min(self.arg1a[self.last_char_checked+1])
+                new_cons = (len(state.solver.constraints) - self.last_constraint_len)
+                self.last_constraint_len = len(state.solver.constraints)
+                if new_cons:
+                    # were there any constraints?
+                    log("%d new constraints" % new_cons)
+                    if self.last_char_checked < Max_Input_Len - 1 and m > 31 and m < 128:
+                        log("adding: %s at %d" % (chr(m), self.last_char_checked))
+                        self.states = []
+                        self.update_checked_char()
+                    else:
+                        log("->ignored")
             except angr.errors.SimUnsatError, ue:
                 log('unsat.. %s' % str(ue))
                 state, states = self.pop_what(states)
 
     def get_constraint_db(self, state):
         constraint_db = {}
-        for vi in self.retrieve_char_constraints(self.state):
+        for vi in self.retrieve_char_constraints(state):
             # there could be multiple variables in a constraint
             # vi is a set of variables.
             for i in vi:
@@ -161,37 +173,47 @@ class Program:
                 print "cons", i
 
     def print_current_args(self):
-        for i in self.state.solver.eval_upto(self.arg1, 1, cast_to=str):
+        for i in self.state.solver.eval_upto(self.arg1, 10, cast_to=str):
             log(repr(i.strip('\x00\xff')))
 
 
 prog = Program(sys.argv[1])#'./bin/pexpr')
 status = None
 state = None
-for i in range(1000):
-    print(i)
-    prog.update_constraints()
-    status, state = prog.gen_chains()
-    if status == 'success': break
-    if not state:
-        prog.print_current_args()
-        print prog.last_char_checked
-        states = prog.extra_states[-1]
-        prog.state = states.pop()
-        prog.states = states
-        prog.update_checked_char()
-        print prog.last_char_checked
-        #time.sleep(10)
-
-    print "status:", status
-    # prog.print_constraints()
-    prog.print_current_args()
-    if len(prog.states) > 2000:
-        print "states > 2000"
-        embed(globals(), locals(), configure=configure)
-    #time.sleep(1)
-print "loop done"
+prog.update_constraints()
+status, state = prog.gen_chains()
+print status
 prog.print_current_args()
+
+# for i in range(1000):
+#     print(i)
+#     prog.update_constraints()
+#     status, state = prog.gen_chains()
+#     if status == 'success': break
+#     if not state:
+#         prog.print_current_args()
+#         print "1 last_char_checked:", prog.last_char_checked
+#         assert len(prog.extra_states) > 0
+#         # TODO: order by callstack depth
+#         print repr(prog.extra_states)
+#         states = prog.extra_states.pop()
+#         s = sorted(states, lambda x, y: cmp(prog.stack_depth(x), prog.stack_depth(y)))
+#         print ">>>", len(s), prog.stack_depth(s[0]), prog.stack_depth(s[-1])
+#         prog.state = s.pop()
+#         prog.states = s
+#         prog.update_checked_char()
+#         print "2 last_char_checked:", prog.last_char_checked
+#         #time.sleep(10)
+# 
+#     print "status:", status
+#     # prog.print_constraints()
+#     prog.print_current_args()
+#     if len(prog.states) > 2000:
+#         print "states > 2000"
+#         embed(globals(), locals(), configure=configure)
+#     #time.sleep(1)
+# print "loop done"
+# prog.print_current_args()
 #embed(globals(), locals(), configure=configure)
 
 
