@@ -164,9 +164,9 @@ def choose_random(state):
         #states.pop()
         state = succ[i]
 
-p, state1, arg1, my_args = loadexe('./pexpr')
+p, state1, arg1, my_args = loadexe('./bin/pexpr')
 cfg = p.analyses.CFG(fail_fast=True)
-success = getFuncAddress('_Z7successf', cfg)
+success = getFuncAddress('success', cfg)
 
 from ptpython.repl import embed
 embed(globals(), locals())
