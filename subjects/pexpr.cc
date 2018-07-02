@@ -13,6 +13,15 @@ enum EXPR_EVAL_ERR {
 	EEE_WRONG_CHAR = 2,
 	EEE_DIVIDE_BY_ZERO = 3
 };
+
+
+int myAtoi(char *str) {
+    int res = 0; // Initialize result
+    for (int i = 0; str[i] != '\0'; ++i)
+      res = res*10 + str[i] - '0';
+    return res;
+}
+
 typedef char EVAL_CHAR;
 class ExprEval {
 private:
@@ -57,7 +66,8 @@ private:
 			_err_pos = expr;
 			return 0;
 		}
-    double res = strtod(expr, 0);
+    //double res = strtol(expr, &end_ptr, 10);
+    double res = atoi(expr);
 		// Advance the pointer and return the result
 		expr = end_ptr;
 		return negative ? -res : res;
