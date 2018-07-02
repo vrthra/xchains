@@ -174,7 +174,8 @@ class Program:
 
     def print_current_args(self):
         for i in self.state.solver.eval_upto(self.arg1, 10, cast_to=str):
-            log(repr(i.strip('\x00\xff')))
+            log(repr(i[0:self.last_char_checked])) #.strip('\x00\xff')))
+            #log(i[0..self.last_char_checked]) #'\x00\xff')))
 
 
 prog = Program(sys.argv[1])#'./bin/pexpr')
