@@ -41,7 +41,7 @@ class Program:
         self.cfg = self.project.analyses.CFG(fail_fast=True)
         self.success_fn = self.getFuncAddr('success')
 
-        self.last_constraint_len = len(self.istate.solver.constraints)
+        self.last_constraints = " && ".join([str(i) for i in self.istate.solver.constraints])
         self.state = self.istate
 
         self.icdb = self.get_constraint_db(self.state)
@@ -60,14 +60,14 @@ class Program:
         return i
 
     def update_checked_char(self):
-        print "???", self.last_char_checked
+        print "\t last:", self.last_char_checked
         # assert self.state.solver.min(self.arg1a[0]) > 31
         for i in range(self.last_char_checked+1, Max_Input_Len):
             v = self.state.solver.min(self.arg1a[i])
             if v > 31:
             #if not self.state.solver.solution(self.arg1a[i], 0):
                 self.last_char_checked = i
-                print "XXXXXXXXXXXXXXXx  update self.last_char_checked %d: %d:%s" % (i, v,chr(v))
+                #print "XXXXXXXXXXXXXXXx  update self.last_char_checked %d: %d:%s" % (i, v,chr(v))
             else:
                 break
 
@@ -97,7 +97,7 @@ class Program:
     def print_constraints(self):
         for i,c in enumerate(self.state.solver.constraints):
             v = list(self.state.solver.variables(c))
-            print "?\t", i, c, str(v)
+            print "\t?", i, c, str(v)
 
     def gen_chains(self, state=None):
         states = self.states if self.states else []
@@ -117,7 +117,9 @@ class Program:
                     self.last_char_checked = 0
                     self.update_checked_char()
                     if not states: return ('no_states', None)
-                    state, states = self.pop_what(states)
+                    state = states[-1]
+                    states.pop()
+                    #state, states = self.pop_what(states)
                     self.state = state
                     self.states = states
                 elif nsucc > 1:
@@ -136,20 +138,38 @@ class Program:
 
                 # were there any new chars?
                 m = state.solver.min(self.arg1a[self.last_char_checked+1])
-                new_cons = (len(state.solver.constraints) - self.last_constraint_len)
-                self.last_constraint_len = len(state.solver.constraints)
-                if new_cons:
+                last_constraints = " && ".join([str(i) for i in state.solver.constraints])
+                if last_constraints != self.last_constraints:
+                    self.last_constraints = last_constraints
                     # were there any constraints?
-                    log("%d new constraints" % new_cons)
+                    log("new constraints")
                     if self.last_char_checked < Max_Input_Len - 1 and m > 31 and m < 128:
                         log("adding: %s at %d" % (chr(m), self.last_char_checked))
                         self.states = []
                         self.update_checked_char()
+
+                        # now concretize
+                        # TODO: save the state with opposite constraints after
+                        # checking unsat
+                        val = state.solver.eval(self.arg1a[self.last_char_checked])
+                        print "-----> %s" % chr(val)
+                        # # not_state = state.copy()
+                        # # not_state.add_constraints(self.arg1a[self.last_char_checked] != val)
+                        # # not_state.simplify()
+                        # # self.states.append(not_state)
+
+                        # # state.add_constraints(self.arg1a[self.last_char_checked] == val)
+                        # # state.simplify()
+                        # embed(globals(), locals(), configure=configure)
+                        self.last_constraints = " && ".join([str(i) for i in state.solver.constraints])
                     else:
                         log("->ignored")
             except angr.errors.SimUnsatError, ue:
                 log('unsat.. %s' % str(ue))
-                state, states = self.pop_what(states)
+                if not states: return (None, None)
+                state = states[-1]
+                states.pop()
+                # state, states = self.pop_what(states)
 
     def get_constraint_db(self, state):
         constraint_db = {}
@@ -172,19 +192,28 @@ class Program:
             if self.cdb[i] > cdb_[i]:
                 print "cons", i
 
+    def get_current_args(self):
+        return self.state.solver.eval(self.arg1, cast_to=str)[0:self.last_char_checked]
+
     def print_current_args(self):
         for i in self.state.solver.eval_upto(self.arg1, 10, cast_to=str):
             log(repr(i[0:self.last_char_checked])) #.strip('\x00\xff')))
-            #log(i[0..self.last_char_checked]) #'\x00\xff')))
 
 
 prog = Program(sys.argv[1])#'./bin/pexpr')
 status = None
 state = None
-prog.update_constraints()
-status, state = prog.gen_chains()
-print status
-prog.print_current_args()
+with open("results.xt", "w+") as f:
+    while True:
+        prog.update_constraints()
+        status, state = prog.gen_chains()
+        print status
+        prog.print_current_args()
+        print >>f, prog.get_current_args()
+        f.flush()
+        log("remaining: %d" % len(prog.states))
+        if not prog.states: break
+        prog.state = prog.states.pop()
 
 # for i in range(1000):
 #     print(i)
