@@ -56,7 +56,18 @@ private:
 		}
 		// It should be a number; convert it to double
 		char* end_ptr = expr;
-    while ((*end_ptr == '1') || (*end_ptr == '0')) {
+    while (
+        (*end_ptr == '0')
+        || (*end_ptr == '1')
+        || (*end_ptr == '2')
+        || (*end_ptr == '3')
+        || (*end_ptr == '4')
+        || (*end_ptr == '5')
+        || (*end_ptr == '6')
+        || (*end_ptr == '7')
+        || (*end_ptr == '8')
+        || (*end_ptr == '9')
+        ) {
       end_ptr ++;
     }
     // double res = strtod(expr, &end_ptr);
