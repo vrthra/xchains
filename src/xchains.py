@@ -15,6 +15,7 @@ from ptpython.repl import embed
 # weightage to the later states. If it is 0, it is same as
 # random sampling.
 Prob_Mul_Factor = 0
+Closing_Threshold = 0.8
 Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
 Success_Fn = os.environ.get('SUCCESS_FN', 'success')
 Random_Seed = int(os.environ.get('R', '0'))
@@ -106,23 +107,42 @@ class Program:
         assert len(found) == 1, "No address found for function : %s" % fname
         return found[0]
 
+    def begin_closing(self):
+        return self.last_char_checked > (Closing_Threshold * Max_Input_Len)
+
     def choose_a_successor_state(self, states):
         """
         Which successor state to expand? We may apply various heuristics here
-        One is to look for the stack depth. If we are above the threshold
+        -- One is to look for the stack depth. If we are above the threshold
         (say 50% of Max_Input_Len), and we wish to start closing, then
         we might choose the successor state that has the least self.stack_depth
         On the other hand, it may be that closing requires additional procedures
         in which case this heuristic might fail
-        Similarly, another alternative is to look at the constraints added on
+        -- Similarly, another alternative is to look at the constraints added on
         the last character on each state. If the constraint on a state is
         similar enough to the constraints on last_character - 1, then choose
         the other.
         """
         assert states
-        i = random.randint(0, len(states)-1)
-        state = states.pop(i)
-        return state, states
+        s = {self.stack_depth(x) for x in states}
+        if len(s) > 1 and self.begin_closing():
+            sorted_states = sorted(states, lambda x, y: cmp(self.stack_depth(x), self.stack_depth(y)))
+            state = sorted_states.pop()
+            return state, sorted_states
+        else:
+            self.update_checked_char()
+            last = self.last_char_checked
+            (m, n) = (self.state.solver.min(self.arg1a[last]), self.state.solver.max(self.arg1a[last]))
+
+            sel = []
+            for i, s in enumerate(states):
+                (m0, n0) = (s.solver.min(self.arg1a[last+1]), s.solver.max(self.arg1a[last+1]))
+                if (m, n) != (m0, n0): sel.append(i)
+
+            i = random.randint(0, len(states)-1)
+            if sel: i = random.choice(sel)
+            state = states.pop(i)
+            return state, states
 
     def choose_a_previous_path(self, states):
         """
@@ -267,38 +287,7 @@ with open("results.xt", "w+") as f:
             break
         prog.state = prog.states.pop()
 
-# for i in range(1000):
-#     print(i)
-#     prog.update_constraints()
-#     status, state = prog.gen_chains()
-#     if status == 'success': break
-#     if not state:
-#         prog.print_current_args()
-#         print "1 last_char_checked:", prog.last_char_checked
-#         assert len(prog.extra_states) > 0
-#         # TODO: order by callstack depth
-#         print repr(prog.extra_states)
-#         states = prog.extra_states.pop()
-#         s = sorted(states, lambda x, y: cmp(prog.stack_depth(x), prog.stack_depth(y)))
-#         print ">>>", len(s), prog.stack_depth(s[0]), prog.stack_depth(s[-1])
-#         prog.state = s.pop()
-#         prog.states = s
-#         prog.update_checked_char()
-#         print "2 last_char_checked:", prog.last_char_checked
-#         #time.sleep(10)
-#
-#     print "status:", status
-#     # prog.print_constraints()
-#     prog.print_current_args()
-#     if len(prog.states) > 2000:
-#         print "states > 2000"
-#         embed(globals(), locals(), configure=configure)
-#     #time.sleep(1)
-# print "loop done"
-# prog.print_current_args()
 #embed(globals(), locals(), configure=configure)
-
-
 
 # state = prog.gen_chains()
 # print("----------------")
