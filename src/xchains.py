@@ -9,6 +9,12 @@ import claripy
 from ptpython.repl import embed
 
 
+# How to choose the next state. The Prob_Mul_Factor skews the
+# probabilit distribution of choise of elements from the list
+# of states. If greater than 0, it gives a slightly higher
+# weightage to the later states. If it is 0, it is same as
+# random sampling.
+Prob_Mul_Factor = 0
 Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
 Success_Fn = os.environ.get('SUCCESS_FN', 'success')
 Random_Seed = int(os.environ.get('R', '0'))
@@ -46,7 +52,6 @@ class Program:
         The string representation of all constraints. Used to check if a
         constraint has been updated
         """
-        # self.last_constraints_str = " && ".join([str(i) for i in state.solver.constraints])
         self.last_constraints = [claripy.simplify(c) for c in state.solver.constraints]
 
     def update_args(self):
@@ -67,19 +72,29 @@ class Program:
         return i
 
     def update_checked_char(self):
-        print "\t last:", self.last_char_checked
+        log( "t last: %d" % self.last_char_checked)
         # assert self.state.solver.min(self.arg1a[0]) > 31
         for i in range(self.last_char_checked+1, Max_Input_Len):
             m = self.state.solver.min(self.arg1a[i])
-            if m > 31 and m < 128:
-            #if not self.state.solver.solution(self.arg1a[i], 0):
-                self.last_char_checked = i
-                #print "XXXXXXXXXXXXXXXx  update self.last_char_checked @%d: %s" % (i, chr(m))
-            else:
-                break
+            # why can't we just use self.state.solver.solution(self.arg1a[i],0)?
+            # The problem is that many string manipulation routines check for
+            # the existance of null terminator by looking for arg[i] == 0
+            # Since we are in symbolic land, quite often we may be in situations
+            # where the execution may have gone overboard in doing the strlen
+            # and assumed most intervening characters to be > 0 Hence, we
+            # might find quite a lot of \x001 which are not actually genuine
+            # character constraints. Hence we explicitly look for printable
+            if not self.is_printable(self.arg1a[i]): break
+            self.last_char_checked = i
+            # print ">>>  update self.last_char_checked @%d: %s" % (i, chr(m))
 
     def retrieve_char_constraints(self, state):
         return [state.solver.variables(c) for c in state.solver.constraints]
+
+    def is_printable(self, char):
+        m = self.state.solver.min(char)
+        n = self.state.solver.max(char)
+        return m > 31 and n < 128
 
     def make_printable(self, char):
         self.initial_state.add_constraints(char < 128)
@@ -91,16 +106,51 @@ class Program:
         assert len(found) == 1, "No address found for function : %s" % fname
         return found[0]
 
-    def pop_what(self, states):
+    def choose_a_successor_state(self, states):
+        """
+        Which successor state to expand? We may apply various heuristics here
+        One is to look for the stack depth. If we are above the threshold
+        (say 50% of Max_Input_Len), and we wish to start closing, then
+        we might choose the successor state that has the least self.stack_depth
+        On the other hand, it may be that closing requires additional procedures
+        in which case this heuristic might fail
+        Similarly, another alternative is to look at the constraints added on
+        the last character on each state. If the constraint on a state is
+        similar enough to the constraints on last_character - 1, then choose
+        the other.
+        """
         assert states
         i = random.randint(0, len(states)-1)
         state = states.pop(i)
         return state, states
 
+    def choose_a_previous_path(self, states):
+        """
+        Choises: Choose the last state, choose a random state, use a heuristic
+        Heuristic: Rather than go for random state, or the last
+        state, choose the last states with more probability than the first
+        ones.
+        """
+        assert states
+        sl = len(states)
+        arr = []
+        for i in range(sl): arr.extend([i]*(1 + i*Prob_Mul_Factor))
+        i = random.randint(0, len(arr)-1)
+        si = arr[i]
+        state = states[si]
+        states.pop(si)
+        return state, states
+
+        # i = random.randint(0, len(states)-1)
+        # state = states.pop(i)
+        # return state, states
+
+        # state = states.pop()
+
     def print_constraints(self):
         for i,c in enumerate(self.state.solver.constraints):
             v = list(self.state.solver.variables(c))
-            print "\t?", i, c, str(v)
+            log("\t? %d: %s === %s" % (i, c, str(v)))
 
     def identical_constraints(self, xs, ys):
         xsc = claripy.And(*xs)
@@ -109,32 +159,27 @@ class Program:
 
     def gen_chains(self, state=None):
         states = self.states if self.states else []
-        num = 0
         if not state: state = self.state
         while True:
             try:
-                # log("%d states: %d constraints: %d" % (num, len(states), len(state.solver.constraints)))
-                num += 1
-                if state.addr == self.success_fn:
-                    return ('success',state)
+                if state.addr == self.success_fn: return ('success',state)
                 my_succ = state.step().flat_successors # succ.successors for symbolic
-                # TODO: which succ to expand? It is here that we should randomize.
                 nsucc = len(my_succ)
                 # time.sleep(1)
                 if nsucc == 0:
-                    log("__ %d" % len(states)) # No active successors. Go back one step -- verify if we can sat
+                    # No active successors. This can be due to our Max_Input_Len
+                    # overshooting.
+                    log("__ %d" % len(states))
                     self.last_char_checked = 0
                     self.update_checked_char()
                     if not states: return ('no_states', None)
-                    state = states[-1]
-                    states.pop()
-                    #state, states = self.pop_what(states)
+                    state, states = self.choose_a_previous_path(states)
                     self.state = state
                     self.states = states
                 elif nsucc > 1:
                     self.print_args(state)
                     log("successors: %d" % nsucc)
-                    state, ss = self.pop_what(my_succ)
+                    state, ss = self.choose_a_successor_state(my_succ)
                     states.extend(ss)
                     self.states = states
                     self.state = state
@@ -154,17 +199,13 @@ class Program:
                     log("new constraints")
                     if self.last_char_checked < Max_Input_Len - 1 and m > 31 and m < 128:
                         log("adding: %s at %d" % (chr(m), self.last_char_checked))
-                        self.states = []
                         self.update_checked_char()
 
                         # now concretize
                         # TODO: save the state with opposite constraints after
                         # checking unsat
                         val = state.solver.eval(self.arg1a[self.last_char_checked])
-                        print "-----> %s" % chr(val)
-                        v = state.solver.eval(self.arg1, cast_to=str)
-                        print repr(v)
-                        print repr(v[0:self.last_char_checked+1])
+                        log("-----> @%d: %s" % (self.last_char_checked, chr(val)))
                         # # not_state = state.copy()
                         # # not_state.add_constraints(self.arg1a[self.last_char_checked] != val)
                         # # not_state.simplify()
@@ -177,9 +218,7 @@ class Program:
             except angr.errors.SimUnsatError, ue:
                 log('unsat.. %s' % str(ue))
                 if not states: return (None, None)
-                state = states[-1]
-                states.pop()
-                # state, states = self.pop_what(states)
+                state, states = self.choose_a_previous_path(states)
 
     def get_constraint_db(self, state):
         constraint_db = {}
@@ -247,7 +286,7 @@ with open("results.xt", "w+") as f:
 #         prog.update_checked_char()
 #         print "2 last_char_checked:", prog.last_char_checked
 #         #time.sleep(10)
-# 
+#
 #     print "status:", status
 #     # prog.print_constraints()
 #     prog.print_current_args()
