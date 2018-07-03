@@ -8,9 +8,10 @@ import random
 import claripy
 from ptpython.repl import embed
 
-random.seed(sys.argv[2])
 
 Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
+Random_Seed = int(os.environ.get('R', '0'))
+random.seed(Random_Seed)
 
 def log(v): print >>sys.stderr, "\t", v
 def configure(repl): repl.confirm_exit = False
