@@ -49,6 +49,7 @@ class Program:
         self.icdb = self.get_constraint_db(self.state)
         self.cdb = self.icdb
         self.states = []
+        self.extra_states = []
 
         self.last_char_checked = 0
         self.update_checked_char()
@@ -205,6 +206,7 @@ class Program:
         states = self.states if self.states else []
         if not state: state = self.state
         while True:
+            log("states: %d extra: %d" % (len(self.states), len(self.extra_states)))
             try:
                 if state.addr == self.success_fn: return ('success',state)
                 my_succ = state.step().flat_successors # succ.successors for symbolic
@@ -256,7 +258,7 @@ class Program:
                             not_state = state.copy()
                             not_state.add_constraints(self.arg1a[self.last_char_checked] != val)
                             # if not_state.satisfiable():
-                            self.states.append(not_state)
+                            self.extra_states.append(not_state)
                             state.add_constraints(self.arg1a[self.last_char_checked] == val)
                         self.update_constraint_rep(state)
                     else:
@@ -312,7 +314,8 @@ with open("results.xt", "w+") as f:
         print status
         prog.print_args(state)
         if status == 'success':
-            print >>f, "<%s> (%s)" % (repr(prog.get_args(state)), repr(state.solver.eval(prog.arg1, cast_to=str)))
+            print >>f, "<%s>" % repr(prog.get_args(state))
+            print >>f, "\t (%s)" % repr(state.solver.eval(prog.arg1, cast_to=str))
             f.flush()
         log("remaining: %d" % len(prog.states))
         if not prog.states:
