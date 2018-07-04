@@ -250,12 +250,14 @@ class Program:
                         # checking unsat
                         val = state.solver.eval(self.arg1a[self.last_char_checked])
                         log("-----> @%d: %s" % (self.last_char_checked, chr(val)))
-                        # # not_state = state.copy()
-                        # # not_state.add_constraints(self.arg1a[self.last_char_checked] != val)
-                        # # not_state.simplify()
-                        # # self.states.append(not_state)
 
-                        # # state.add_constraints(self.arg1a[self.last_char_checked] == val)
+                        # check if an equality operator is involved
+                        if state.solver.max(self.arg1a[self.last_char_checked]) != state.solver.min(self.arg1a[self.last_char_checked]):
+                            not_state = state.copy()
+                            not_state.add_constraints(self.arg1a[self.last_char_checked] != val)
+                            # if not_state.satisfiable():
+                            self.states.append(not_state)
+                            state.add_constraints(self.arg1a[self.last_char_checked] == val)
                         self.update_constraint_rep(state)
                     else:
                         # the constraint added was not one on the input character
@@ -288,7 +290,12 @@ class Program:
                 print "cons", i
 
     def get_args(self, state):
-        return state.solver.eval(self.arg1, cast_to=str)[0:self.last_char_checked+1]
+        #return state.solver.eval(self.arg1, cast_to=str)[0:self.last_char_checked+1]
+        val = state.solver.eval(self.arg1, cast_to=str)
+        for i in range(len(val)):
+            if val[i] == '\x00':
+                return val[0:i]
+        return val
 
     def print_args(self, state):
         for i in state.solver.eval_upto(self.arg1, 1, cast_to=str):
@@ -305,7 +312,7 @@ with open("results.xt", "w+") as f:
         print status
         prog.print_args(state)
         if status == 'success':
-            print >>f, "<%s>" % repr(prog.get_args(state))
+            print >>f, "<%s> (%s)" % (repr(prog.get_args(state)), repr(state.solver.eval(prog.arg1, cast_to=str)))
             f.flush()
         log("remaining: %d" % len(prog.states))
         if not prog.states:
