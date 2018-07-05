@@ -56,7 +56,7 @@ class ExprEval {
       }
       // It should be a number; convert it to double
       char* end_ptr = expr;
-      while (
+      /*while (
           (*end_ptr == '0')
           || (*end_ptr == '1')
           || (*end_ptr == '2')
@@ -68,6 +68,9 @@ class ExprEval {
           || (*end_ptr == '8')
           || (*end_ptr == '9')
           ) {
+        end_ptr ++;
+      }*/
+      while ((*end_ptr >= '0') && (*end_ptr <= '9')) {
         end_ptr ++;
       }
       // double res = strtod(expr, &end_ptr);
