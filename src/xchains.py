@@ -133,11 +133,20 @@ class Program:
     def begin_closing(self):
         return self.last_char_checked > (Closing_Threshold * Max_Input_Len)
 
-    def zero_starting(self, state):
+    def zero_termination(self, state):
+        """
+        Return the zero termination of the argument string
+        """
         if Count_Down:
+            ret = 0
             for i in range(Max_Input_Len-1, -1, -1):
-                if state.solver.solution(self.arg1a[i], 0): return i + 1
-            assert False
+                # we count from the back. So if any character
+                # does not have zero as a solution, then its
+                # next character is the zero termination
+                if not state.solver.solution(self.arg1a[i], 0):
+                    ret = i + 1
+                    break
+            return ret
         else:
             for i in range(0, Max_Input_Len):
                 m = state.solver.min(self.arg1a[i])
@@ -165,26 +174,14 @@ class Program:
         """
         assert states
 
-        # First, order states based on where the 0 starts.
-        # zeros = sorted([(i, self.zero_starting(s)) for i,s in enumerate(states)], lambda x,y: cmp(x[1], y[1]))
-        # states = [states[i] for i,s in zeros]
-        # min_z_size = zeros[0][1]
-        # # get all states with that zstarting
-        # min_idxs = [z[0] for z in zeros if z[1] == min_z_size]
-        # mi_states = [(i, states[i]) for i in min_idxs]
-        mi_states = list(enumerate(states))
-
-        # optimization. If we have only one state, dont bother to check anything
-        # else, just return.
-        if len(mi_states) == 1:
-            state = states.pop(mi_states[0][0])
-            return state, states
-
-        stacks = {self.stack_depth(x) for i,x in mi_states}
+        stacks = {self.stack_depth(x) for x in states}
          # TODO: Explore the next n successors, and find if any of these have
          # smaller stack depth.
         if len(stacks) > 1 and self.begin_closing():
-            sorted_states = sorted(mi_states, lambda x, y: cmp(self.stack_depth(x[1]), self.stack_depth(y[1])))
+            sorted_states = sorted(states,
+                lambda x, y:
+                    cmp((self.stack_depth(x), self.zero_termination(x)),
+                        (self.stack_depth(y), self.zero_termination(y))))
             i,state = sorted_states.pop()
             s = states.pop(i)
             assert state == s
@@ -192,17 +189,27 @@ class Program:
         else:
             self.update_checked_char()
             last = self.last_char_checked
-            (m, n) = (self.state.solver.min(self.arg1a[last]), self.state.solver.max(self.arg1a[last]))
+            c = self.arg1a[last]
+            (m, n) = (self.state.solver.min(c), self.state.solver.max(c))
 
             sel = []
-            for i, s in mi_states:
-                 (m0, n0) = (s.solver.min(self.arg1a[last+1]), s.solver.max(self.arg1a[last+1]))
-                 if (m, n) != (m0, n0): sel.append(i)
+            for i,s in enumerate(states):
+                c0 = self.arg1a[last+1]
+                (m0, n0) = (s.solver.min(c0), s.solver.max(c0))
+                if (m, n) != (m0, n0): sel.append(i)
+            if not sel:
+                i = random.randint(0, len(states)-1)
+                state = states.pop(i)
+                return state, states
+            else:
+                chosen_states = [(i, self.zero_termination(states[i])) for i in sel]
+                sorted_chosen =  sorted(chosen_states, lambda x, y: cmp(x[1], y[1]))
+                x_size = sorted_chosen[0][1]
+                min_size_idx = [i[0] for i in sorted_chosen if i[1] == x_size]
 
-            i = random.randint(0, len(states)-1)
-            if sel: i = random.choice(sel)
-            state = states.pop(i)
-            return state, states
+                i = random.choice(min_size_idx)
+                state = states.pop(i)
+                return state, states
 
     def choose_a_previous_path(self, states):
         """
