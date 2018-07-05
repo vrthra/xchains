@@ -14,24 +14,25 @@ import claripy
 # random sampling.
 Prob_Mul_Factor = 0
 
-
 # Count_Down because there may be no constraints at the tail
 Count_Down = True
 Closing_Threshold = 0.8
 Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
-Min_Input_Len = int(os.environ.get('MIN_INPUT', '5'))
+Min_Input_Len = int(os.environ.get('MIN_INPUT', '0'))
 Success_Fn = os.environ.get('SUCCESS_FN', 'success')
 Random_Seed = int(os.environ.get('R', '0'))
 Prefer_Shortest_Strings = True
 random.seed(Random_Seed)
 
-def log(v):
-    print >>sys.stderr, "\t", v
-    sys.stderr.flush()
+# Given a range of solutions, should we fix one solution
+# before we explore further?
+Quick_Fix = True
 
 def w(v):
     sys.stderr.write(v)
     sys.stderr.flush()
+
+def log(v): w("\t%s\n" % v)
 
 class Program:
     def __init__(self, exe):
@@ -52,8 +53,6 @@ class Program:
         self.state = self.initial_state
         self.update_constraint_rep(self.state)
 
-        self.icdb = self.get_constraint_db(self.state)
-        self.cdb = self.icdb
         self.states = []
         self.extra_states = []
 
@@ -74,7 +73,7 @@ class Program:
         to reduce(lambda x,y: x.concat(y), self.arg1a), but it
         gives us better access to individual elements
         """
-        arg1k = ['sym_arg_%s' % str(i) for i in range(0, Max_Input_Len+1)]
+        arg1k = ['sym_arg_%d' % i for i in range(0, Max_Input_Len+1)]
         self.arg1h = {k:claripy.BVS(k, 8) for k in arg1k}
         self.arg1h_ = {self.arg1h[k].args[0]:k for k in arg1k}
         self.arg1a = [self.arg1h[k] for k in arg1k]
@@ -89,6 +88,9 @@ class Program:
         return i
 
     def update_checked_char(self):
+        """
+        Update the last character that has been resolved (i.e. made printable)
+        """
         # why can't we just use self.state.solver.solution(self.arg1a[i],0)?
         # The problem is that many string manipulation routines check for
         # the existance of null terminator by looking for arg[i] == 0
@@ -99,8 +101,10 @@ class Program:
         # character constraints. Hence we explicitly look for printable
 
         if Count_Down:
+            db = set(reduce(lambda x, y: x.union(y), self.retrieve_char_constraints(self.state)))
             self.last_char_checked = 0
             for i in range(Max_Input_Len-1, -1, -1):
+                if ("sym_arg_%d" % i) not in db: continue
                 if self.is_printable(self.arg1a[i]):
                     self.last_char_checked = i
                     break
@@ -144,8 +148,10 @@ class Program:
     def choose_a_successor_state(self, states):
         """
         Which successor state to expand? We may apply various heuristics here
-        -- One is to look for the stack depth. If we are above the threshold
-        (say 50% of Max_Input_Len), and we wish to start closing, then
+        First, we sort by the smallest strings (zero starting). Then choose
+        the smallest string(s)
+        -- another is to look for the stack depth. If we are above the threshold
+        (say 80% of Max_Input_Len), and we wish to start closing, then
         we might choose the successor state that has the least self.stack_depth
         On the other hand, it may be that closing requires additional procedures
         in which case this heuristic might fail
@@ -159,29 +165,39 @@ class Program:
         """
         assert states
 
-        # TODO: order states based on where the 0 starts.
-        zeros = sorted([(self.zero_starting(s),i) for i,s in enumerate(states)])
-        if Prefer_Shortest_Strings and len({i[0] for i in zeros}) > 1:
-            min_idx = zeros[0][1]
-            state = states.pop(min_idx)
+        # First, order states based on where the 0 starts.
+        # zeros = sorted([(i, self.zero_starting(s)) for i,s in enumerate(states)], lambda x,y: cmp(x[1], y[1]))
+        # states = [states[i] for i,s in zeros]
+        # min_z_size = zeros[0][1]
+        # # get all states with that zstarting
+        # min_idxs = [z[0] for z in zeros if z[1] == min_z_size]
+        # mi_states = [(i, states[i]) for i in min_idxs]
+        mi_states = list(enumerate(states))
+
+        # optimization. If we have only one state, dont bother to check anything
+        # else, just return.
+        if len(mi_states) == 1:
+            state = states.pop(mi_states[0][0])
             return state, states
 
-        stacks = {self.stack_depth(x) for x in states}
-        # TODO: Explore the next n successors, and find if any of these have
-        # smaller stack depth.
+        stacks = {self.stack_depth(x) for i,x in mi_states}
+         # TODO: Explore the next n successors, and find if any of these have
+         # smaller stack depth.
         if len(stacks) > 1 and self.begin_closing():
-            sorted_states = sorted(states, lambda x, y: cmp(self.stack_depth(x), self.stack_depth(y)))
-            state = sorted_states.pop()
-            return state, sorted_states
+            sorted_states = sorted(mi_states, lambda x, y: cmp(self.stack_depth(x[1]), self.stack_depth(y[1])))
+            i,state = sorted_states.pop()
+            s = states.pop(i)
+            assert state == s
+            return state, states
         else:
             self.update_checked_char()
             last = self.last_char_checked
             (m, n) = (self.state.solver.min(self.arg1a[last]), self.state.solver.max(self.arg1a[last]))
 
             sel = []
-            for i, s in enumerate(states):
-                (m0, n0) = (s.solver.min(self.arg1a[last+1]), s.solver.max(self.arg1a[last+1]))
-                if (m, n) != (m0, n0): sel.append(i)
+            for i, s in mi_states:
+                 (m0, n0) = (s.solver.min(self.arg1a[last+1]), s.solver.max(self.arg1a[last+1]))
+                 if (m, n) != (m0, n0): sel.append(i)
 
             i = random.randint(0, len(states)-1)
             if sel: i = random.choice(sel)
@@ -272,12 +288,12 @@ class Program:
                         log("-----> @%d: %s" % (self.last_char_checked, chr(val)))
 
                         # check if an equality operator is involved
-                        if state.solver.max(self.arg1a[self.last_char_checked]) != state.solver.min(self.arg1a[self.last_char_checked]):
+                        c = self.arg1a[self.last_char_checked]
+                        if Quick_Fix and state.solver.max(c) != state.solver.min(c):
                             not_state = state.copy()
-                            not_state.add_constraints(self.arg1a[self.last_char_checked] != val)
-                            # if not_state.satisfiable():
+                            not_state.add_constraints(c != val)
                             self.extra_states.append(not_state)
-                            state.add_constraints(self.arg1a[self.last_char_checked] == val)
+                            state.add_constraints(c == val)
                         self.update_constraint_rep(state)
                     else:
                         # the constraint added was not one on the input character
@@ -288,9 +304,9 @@ class Program:
                 if not states: return ('no_states', None)
                 state, states = self.choose_a_previous_path(states)
 
-    def get_constraint_db(self, state):
+    def get_constraint_db(self):
         constraint_db = {}
-        for vi in self.retrieve_char_constraints(state):
+        for vi in self.retrieve_char_constraints(self.state):
             # there could be multiple variables in a constraint
             # vi is a set of variables.
             for i in vi:
@@ -299,15 +315,9 @@ class Program:
                     if v not in constraint_db: constraint_db[v] = 0
                     constraint_db[v] += 1
                 else:
-                    log("? %s" % i)
+                    pass
+                    #log("? %s" % i)
         return constraint_db
-
-    def update_constraints(self):
-        cdb_ = self.cdb
-        self.cdb = self.get_constraint_db(self.state)
-        for i in self.icdb:
-            if self.cdb[i] > cdb_[i]:
-                print "cons", i
 
     def get_args(self, state):
         #return state.solver.eval(self.arg1, cast_to=str)[0:self.last_char_checked+1]
@@ -321,23 +331,33 @@ class Program:
         for i in state.solver.eval_upto(self.arg1, 1, cast_to=str):
             log(repr(i[0:self.last_char_checked+1])) #.strip('\x00\xff')))
 
-
+Show_Range = False
 def main(exe):
     prog = Program(exe)
     status, state = None, None
-    with open("results.xt", "w+") as f:
+    with open("results.txt", "w+") as f:
         while True:
-            prog.update_constraints()
             status, state = prog.gen_chains()
             print status
             prog.print_args(state)
             if status == 'success':
+                prog.update_checked_char()
                 print >>f, "<%s>" % repr(prog.get_args(state))
-                print >>f, "\t (%s)" % repr(state.solver.eval(prog.arg1, cast_to=str))
+                if Show_Range:
+                    minval = []
+                    maxval = []
+                    for i in range(prog.last_char_checked+1):
+                        c = prog.arg1a[i]
+                        x, y = state.solver.min(c), state.solver.max(c)
+                        minval.append(chr(x))
+                        maxval.append(chr(y))
+                    print >>f, "min:", repr("".join(minval))
+                    print >>f, "max:", repr("".join(maxval))
+                # print >>f, "\t (%s)" % repr(i[0:prog.last_char_checked+1])
                 f.flush()
             log("remaining: %d" % len(prog.states))
             if not prog.states:
-                print "No more states"
+                print "No more states extra_states:", len(prog.extra_states)
                 break
             prog.state = prog.states.pop()
 
@@ -345,6 +365,6 @@ main(sys.argv[1])
 
 # state = prog.gen_chains()
 # print("----------------")
-# cdb = prog.get_constraint_db(prog.state)
+# cdb = prog.get_constraint_db()
 # for i in cdb: print i, cdb[i]
 
