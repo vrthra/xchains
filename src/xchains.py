@@ -255,12 +255,12 @@ class Program:
         states = self.states if self.states else []
         if not state: state = self.state
         while True:
-            if Closing_Strip and self.begin_closing():
+            if Closing_Strip:
                 if len(self.states) > Closing_Buffer:
                     print "start stripping from:", len(self.states)
                     # strip out all but best 100
                     ss = sorted([(self.stack_depth(s), i) for i, s in enumerate(self.states)])
-                    ss = ss[0:100]
+                    ss = ss[0:Closing_Buffer]
                     states = [self.states[i] for d, i in ss]
                     self.states = states
             try:
