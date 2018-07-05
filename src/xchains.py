@@ -6,16 +6,17 @@ import time
 import angr
 import random
 import claripy
-import pudb; brk = pudb.set_trace
-from ptpython.repl import embed
-
 
 # How to choose the next state. The Prob_Mul_Factor skews the
-# probabilit distribution of choise of elements from the list
+# probability distribution of choise of elements from the list
 # of states. If greater than 0, it gives a slightly higher
 # weightage to the later states. If it is 0, it is same as
 # random sampling.
 Prob_Mul_Factor = 0
+
+
+# Count_Down because there may be no constraints at the tail
+Count_Down = True
 Closing_Threshold = 0.8
 Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
 Min_Input_Len = int(os.environ.get('MIN_INPUT', '5'))
@@ -24,8 +25,13 @@ Random_Seed = int(os.environ.get('R', '0'))
 Prefer_Shortest_Strings = True
 random.seed(Random_Seed)
 
-def log(v): print >>sys.stderr, "\t", v
-def configure(repl): repl.confirm_exit = False
+def log(v):
+    print >>sys.stderr, "\t", v
+    sys.stderr.flush()
+
+def w(v):
+    sys.stderr.write(v)
+    sys.stderr.flush()
 
 class Program:
     def __init__(self, exe):
@@ -62,12 +68,16 @@ class Program:
         self.last_constraints = [claripy.simplify(c) for c in state.solver.constraints]
 
     def update_args(self):
-        """ Various mappings to argument chars for easy access. """
+        """
+        Various mappings to argument chars for easy access.
+        Note that claripy.BVS('sym_arg', 8 * N) is equivalent
+        to reduce(lambda x,y: x.concat(y), self.arg1a), but it
+        gives us better access to individual elements
+        """
         arg1k = ['sym_arg_%s' % str(i) for i in range(0, Max_Input_Len+1)]
         self.arg1h = {k:claripy.BVS(k, 8) for k in arg1k}
         self.arg1h_ = {self.arg1h[k].args[0]:k for k in arg1k}
         self.arg1a = [self.arg1h[k] for k in arg1k]
-        # self.arg1 = claripy.BVS('sym_arg', 8 * )
         self.arg1 = reduce(lambda x,y: x.concat(y), self.arg1a)
 
     def stack_depth(self, state):
@@ -79,21 +89,25 @@ class Program:
         return i
 
     def update_checked_char(self):
-        log( "t last: %d" % self.last_char_checked)
-        # assert self.state.solver.min(self.arg1a[0]) > 31
-        for i in range(self.last_char_checked+1, Max_Input_Len):
-            m = self.state.solver.min(self.arg1a[i])
-            # why can't we just use self.state.solver.solution(self.arg1a[i],0)?
-            # The problem is that many string manipulation routines check for
-            # the existance of null terminator by looking for arg[i] == 0
-            # Since we are in symbolic land, quite often we may be in situations
-            # where the execution may have gone overboard in doing the strlen
-            # and assumed most intervening characters to be > 0 Hence, we
-            # might find quite a lot of \x001 which are not actually genuine
-            # character constraints. Hence we explicitly look for printable
-            if not self.is_printable(self.arg1a[i]): break
-            self.last_char_checked = i
-            # print ">>>  update self.last_char_checked @%d: %s" % (i, chr(m))
+        # why can't we just use self.state.solver.solution(self.arg1a[i],0)?
+        # The problem is that many string manipulation routines check for
+        # the existance of null terminator by looking for arg[i] == 0
+        # Since we are in symbolic land, quite often we may be in situations
+        # where the execution may have gone overboard in doing the strlen
+        # and assumed most intervening characters to be > 0 Hence, we
+        # might find quite a lot of \x001 which are not actually genuine
+        # character constraints. Hence we explicitly look for printable
+
+        if Count_Down:
+            self.last_char_checked = 0
+            for i in range(Max_Input_Len-1, -1, -1):
+                if self.is_printable(self.arg1a[i]):
+                    self.last_char_checked = i
+                    break
+        else:
+            for i in range(self.last_char_checked+1, Max_Input_Len):
+                if not self.is_printable(self.arg1a[i]): break
+                self.last_char_checked = i
 
     def retrieve_char_constraints(self, state):
         return [state.solver.variables(c) for c in state.solver.constraints]
@@ -116,11 +130,16 @@ class Program:
         return self.last_char_checked > (Closing_Threshold * Max_Input_Len)
 
     def zero_starting(self, state):
-        for i in range(0, Max_Input_Len):
-            m = state.solver.min(self.arg1a[i])
-            if m == 0:
-                return i
-        return Max_Input_Len
+        if Count_Down:
+            for i in range(Max_Input_Len-1, -1, -1):
+                if state.solver.solution(self.arg1a[i], 0): return i + 1
+            assert False
+        else:
+            for i in range(0, Max_Input_Len):
+                m = state.solver.min(self.arg1a[i])
+                if m == 0:
+                    return i
+            return Max_Input_Len
 
     def choose_a_successor_state(self, states):
         """
@@ -206,7 +225,7 @@ class Program:
         states = self.states if self.states else []
         if not state: state = self.state
         while True:
-            log("states: %d extra: %d" % (len(self.states), len(self.extra_states)))
+            # log("states: %d extra: %d" % (len(self.states), len(self.extra_states)))
             try:
                 if state.addr == self.success_fn: return ('success',state)
                 my_succ = state.step().flat_successors # succ.successors for symbolic
@@ -232,19 +251,18 @@ class Program:
                     # self.print_constraints()
                     log("============")
                 else:
-                    sys.stderr.write(".")
+                    w(".")
                     state = my_succ[0]
                     continue
 
                 # were there any new chars?
-                m = state.solver.min(self.arg1a[self.last_char_checked+1])
                 current_constraints = [claripy.simplify(c) for c in state.solver.constraints]
                 if not self.identical_constraints(current_constraints, self.last_constraints):
                     self.last_constraints = current_constraints
                     # were there any constraints?
                     log("new constraints")
-                    if self.last_char_checked < Max_Input_Len - 1 and m > 31 and m < 128:
-                        log("adding: %s at %d" % (chr(m), self.last_char_checked))
+                    if  self.is_printable(self.arg1a[self.last_char_checked+1]):
+                        # log("adding: %s at %d" % (chr(m), self.last_char_checked))
                         self.update_checked_char()
 
                         # now concretize
@@ -264,7 +282,7 @@ class Program:
                     else:
                         # the constraint added was not one on the input character
                         # hence we ignore.
-                        log("->ignored")
+                        w("x")
             except angr.errors.SimUnsatError, ue:
                 log('unsat.. %s' % str(ue))
                 if not states: return ('no_states', None)
@@ -304,33 +322,29 @@ class Program:
             log(repr(i[0:self.last_char_checked+1])) #.strip('\x00\xff')))
 
 
-prog = Program(sys.argv[1])#'./bin/pexpr')
-status = None
-state = None
-with open("results.xt", "w+") as f:
-    while True:
-        prog.update_constraints()
-        status, state = prog.gen_chains()
-        print status
-        prog.print_args(state)
-        if status == 'success':
-            print >>f, "<%s>" % repr(prog.get_args(state))
-            print >>f, "\t (%s)" % repr(state.solver.eval(prog.arg1, cast_to=str))
-            f.flush()
-        log("remaining: %d" % len(prog.states))
-        if not prog.states:
-            print "No more states"
-            break
-        prog.state = prog.states.pop()
+def main(exe):
+    prog = Program(exe)
+    status, state = None, None
+    with open("results.xt", "w+") as f:
+        while True:
+            prog.update_constraints()
+            status, state = prog.gen_chains()
+            print status
+            prog.print_args(state)
+            if status == 'success':
+                print >>f, "<%s>" % repr(prog.get_args(state))
+                print >>f, "\t (%s)" % repr(state.solver.eval(prog.arg1, cast_to=str))
+                f.flush()
+            log("remaining: %d" % len(prog.states))
+            if not prog.states:
+                print "No more states"
+                break
+            prog.state = prog.states.pop()
 
-#embed(globals(), locals(), configure=configure)
+main(sys.argv[1])
 
 # state = prog.gen_chains()
 # print("----------------")
 # cdb = prog.get_constraint_db(prog.state)
 # for i in cdb: print i, cdb[i]
-# embed(globals(), locals(), configure=configure)
-# #for i in state.solver.eval_upto(prog.arg1, 10, cast_to=str):
-# #    log(i)
-# state1 = prog.gen_chains(state)
-# embed(globals(), locals())
+
