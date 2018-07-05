@@ -17,6 +17,8 @@ Prob_Mul_Factor = 0
 # Count_Down because there may be no constraints at the tail
 Count_Down = True
 Closing_Threshold = 0.8
+Closing_Strip = True
+Closing_Buffer = 1000
 Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
 Min_Input_Len = int(os.environ.get('MIN_INPUT', '0'))
 Success_Fn = os.environ.get('SUCCESS_FN', 'success')
@@ -253,25 +255,43 @@ class Program:
         states = self.states if self.states else []
         if not state: state = self.state
         while True:
+            if Closing_Strip and self.begin_closing():
+                if len(self.states) > Closing_Buffer:
+                    print "start stripping from:", len(self.states)
+                    # strip out all but best 100
+                    ss = sorted([(self.stack_depth(s), i) for i, s in enumerate(self.states)])
+                    ss = ss[0:100]
+                    states = [self.states[i] for d, i in ss]
+                    self.states = states
             try:
                 if state.addr == self.success_fn: return ('success',state)
+                w("<")
+                w("%d+" % len(states))
                 my_succ = state.step().flat_successors # succ.successors for symbolic
                 nsucc = len(my_succ)
+                w(str(nsucc))
+                w(">")
                 # time.sleep(1)
                 if nsucc == 0:
                     # No active successors. This can be due to our Max_Input_Len
                     # overshooting.
-                    log("__ %d" % len(states))
+                    log("<< %d" % len(states))
+                    w("(")
                     self.last_char_checked = 0
+                    w(".")
                     self.update_checked_char()
                     if not states: return ('no_states', None)
+                    w(".")
                     state, states = self.choose_a_previous_path(states)
+                    w(")")
                     self.state = state
                     self.states = states
                 elif nsucc > 1:
-                    self.print_args(state)
-                    log("successors: %d" % nsucc)
+                    arg = self.get_args(state)
+                    w("{")
+                    w(repr(arg))
                     state, ss = self.choose_a_successor_state(my_succ)
+                    w("}")
                     states.extend(ss)
                     self.states = states
                     self.state = state
@@ -281,6 +301,7 @@ class Program:
                     continue
 
                 # were there any new chars?
+                w("[")
                 current_constraints = [claripy.simplify(c) for c in state.solver.constraints]
                 if not self.identical_constraints(current_constraints, self.last_constraints):
                     self.last_constraints = current_constraints
@@ -293,7 +314,7 @@ class Program:
                         # TODO: save the state with opposite constraints after
                         # checking unsat
                         val = state.solver.eval(self.arg1a[self.last_char_checked])
-                        log("-----> @%d: %s" % (self.last_char_checked, chr(val)))
+                        w("@%d: %s" % (self.last_char_checked, chr(val)))
 
                         # check if an equality operator is involved
                         c = self.arg1a[self.last_char_checked]
@@ -303,10 +324,11 @@ class Program:
                             self.extra_states.append(not_state)
                             state.add_constraints(c == val)
                         self.update_constraint_rep(state)
+                        log("]")
                     else:
                         # the constraint added was not one on the input character
                         # hence we ignore.
-                        w("x")
+                        w("x]")
             except angr.errors.SimUnsatError, ue:
                 log('unsat.. %s' % str(ue))
                 if not states: return ('no_states', None)
