@@ -88,9 +88,10 @@ const nx_json* nx_json_item(const nx_json* json, int idx); // get array element 
 #endif
 
 // redefine NX_JSON_REPORT_ERROR to use custom error reporting
-#ifndef NX_JSON_REPORT_ERROR
+/*#ifndef NX_JSON_REPORT_ERROR
 #define NX_JSON_REPORT_ERROR(msg, p) fprintf(stderr, "NXJSON PARSE ERROR (%d): " msg " at %s\n", __LINE__, p)
-#endif
+#endif*/
+#define NX_JSON_REPORT_ERROR(msg, p)
 
 #define IS_WHITESPACE(c) ((unsigned char)(c)<=(unsigned char)' ')
 
