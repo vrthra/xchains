@@ -106,7 +106,7 @@ class Program:
             db = set(reduce(lambda x, y: x.union(y), self.retrieve_char_constraints(self.state)))
             self.last_char_checked = 0
             for i in range(Max_Input_Len-1, -1, -1):
-                if ("sym_arg_%d" % i) not in db: continue
+                if ("sym_arg_%d_%d_8" % (i, i)) not in db: continue
                 if self.is_printable(self.arg1a[i]):
                     self.last_char_checked = i
                     break
@@ -279,18 +279,22 @@ class Program:
                     w("(")
                     self.last_char_checked = 0
                     w(".")
-                    self.update_checked_char()
                     if not states: return ('no_states', None)
                     w(".")
                     state, states = self.choose_a_previous_path(states)
+                    self.update_checked_char()
                     w(")")
                     self.state = state
                     self.states = states
                 elif nsucc > 1:
-                    arg = self.get_args(state)
                     w("{")
+                    arg = self.get_args(state)
                     w(repr(arg))
+                    w(",")
                     state, ss = self.choose_a_successor_state(my_succ)
+                    self.update_checked_char()
+                    arg = self.get_args(state)
+                    w(repr(arg))
                     w("}")
                     states.extend(ss)
                     self.states = states
@@ -308,8 +312,6 @@ class Program:
                     # were there any constraints?
                     if  self.is_printable(self.arg1a[self.last_char_checked+1]):
                         # log("adding: %s at %d" % (chr(m), self.last_char_checked))
-                        self.update_checked_char()
-
                         # now concretize
                         # TODO: save the state with opposite constraints after
                         # checking unsat
