@@ -98,7 +98,7 @@ const nx_json* nx_json_item(const nx_json* json, int idx); // get array element 
 static const nx_json dummy={ NX_JSON_NULL };
 
 static nx_json* create_json(nx_json_type type, const char* key, nx_json* parent) {
-  nx_json* js=NX_JSON_CALLOC();
+  nx_json* js=(nx_json*) NX_JSON_CALLOC();
   assert(js);
   js->type=type;
   js->key=key;
@@ -183,31 +183,33 @@ static char* unescape_string(char* s, char** end, nx_json_unicode_encoder encode
             *d++=c;
             break;
           }
-          char* ps=p-1;
-          int h1, h2, h3, h4;
-          if ((h1=hex_val(p[1]))<0 || (h2=hex_val(p[2]))<0 || (h3=hex_val(p[3]))<0 || (h4=hex_val(p[4]))<0) {
-            NX_JSON_REPORT_ERROR("invalid unicode escape", p-1);
-            return 0;
-          }
-          unsigned int codepoint=h1<<12|h2<<8|h3<<4|h4;
-          if ((codepoint & 0xfc00)==0xd800) { // high surrogate; need one more unicode to succeed
-            p+=6;
-            if (p[-1]!='\\' || *p!='u' || (h1=hex_val(p[1]))<0 || (h2=hex_val(p[2]))<0 || (h3=hex_val(p[3]))<0 || (h4=hex_val(p[4]))<0) {
-              NX_JSON_REPORT_ERROR("invalid unicode surrogate", ps);
+          {
+            char* ps=p-1;
+            int h1, h2, h3, h4;
+            if ((h1=hex_val(p[1]))<0 || (h2=hex_val(p[2]))<0 || (h3=hex_val(p[3]))<0 || (h4=hex_val(p[4]))<0) {
+              NX_JSON_REPORT_ERROR("invalid unicode escape", p-1);
               return 0;
             }
-            unsigned int codepoint2=h1<<12|h2<<8|h3<<4|h4;
-            if ((codepoint2 & 0xfc00)!=0xdc00) {
-              NX_JSON_REPORT_ERROR("invalid unicode surrogate", ps);
+            unsigned int codepoint=h1<<12|h2<<8|h3<<4|h4;
+            if ((codepoint & 0xfc00)==0xd800) { // high surrogate; need one more unicode to succeed
+              p+=6;
+              if (p[-1]!='\\' || *p!='u' || (h1=hex_val(p[1]))<0 || (h2=hex_val(p[2]))<0 || (h3=hex_val(p[3]))<0 || (h4=hex_val(p[4]))<0) {
+                NX_JSON_REPORT_ERROR("invalid unicode surrogate", ps);
+                return 0;
+              }
+              unsigned int codepoint2=h1<<12|h2<<8|h3<<4|h4;
+              if ((codepoint2 & 0xfc00)!=0xdc00) {
+                NX_JSON_REPORT_ERROR("invalid unicode surrogate", ps);
+                return 0;
+              }
+              codepoint=0x10000+((codepoint-0xd800)<<10)+(codepoint2-0xdc00);
+            }
+            if (!encoder(codepoint, d, &d)) {
+              NX_JSON_REPORT_ERROR("invalid codepoint", ps);
               return 0;
             }
-            codepoint=0x10000+((codepoint-0xd800)<<10)+(codepoint2-0xdc00);
+            p+=5;
           }
-          if (!encoder(codepoint, d, &d)) {
-            NX_JSON_REPORT_ERROR("invalid codepoint", ps);
-            return 0;
-          }
-          p+=5;
           break;
         default:
           // leave untouched
@@ -401,7 +403,8 @@ const nx_json* nx_json_parse_utf8(char* text) {
 }
 
 const nx_json* nx_json_parse(char* text, nx_json_unicode_encoder encoder) {
-  nx_json js={0};
+  nx_json js;
+  js.type = nx_json_type::NX_JSON_NULL;
   if (!parse_value(&js, 0, text, encoder)) {
     if (js.child) nx_json_free(js.child);
     return 0;
