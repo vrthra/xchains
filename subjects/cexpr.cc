@@ -174,7 +174,9 @@ int main(int argc, char* argv[]) {
     //printf("<%s>", expr);
     if(GetErr(&eval) == EEE_NO_ERROR) {
         success(res);
+        return 0;
     } else {
+        return 1;
         printf("error\n");
     }
 }
