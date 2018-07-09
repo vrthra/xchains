@@ -404,7 +404,7 @@ const nx_json* nx_json_parse_utf8(char* text) {
 
 const nx_json* nx_json_parse(char* text, nx_json_unicode_encoder encoder) {
   nx_json js;
-  js.type = nx_json_type::NX_JSON_NULL;
+  js.type = NX_JSON_NULL;
   if (!parse_value(&js, 0, text, encoder)) {
     if (js.child) nx_json_free(js.child);
     return 0;
