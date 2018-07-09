@@ -19,8 +19,6 @@
 
 #include <assert.h>
 // this file can be #included in your code
-#ifndef NXJSON_C
-#define NXJSON_C
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -62,11 +60,6 @@ const nx_json* nx_json_get(const nx_json* json, const char* key); // get object'
 const nx_json* nx_json_item(const nx_json* json, int idx); // get array element by index
 
 
-#ifdef  __cplusplus
-}
-#endif
-
-#endif  /* NXJSON_H */
 /*#include "nxjson.h"*/
 
 // redefine NX_JSON_CALLOC & NX_JSON_FREE to use custom allocator
@@ -421,6 +414,7 @@ const nx_json* nx_json_item(const nx_json* json, int idx) {
 
 void success() {
   printf("done!\n");
+  exit(0);
 }
 int main(int argc, char* argv[0]) {
   assert(argc>1);

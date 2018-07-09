@@ -1,7 +1,9 @@
 #include<stdio.h>
+#include<stdlib.h>
 #include<assert.h>
-extern "C" void success() {
+void success() {
   printf("success\n");
+  exit(0);
 }
 int main(int argc, char* argv[]) {
   assert(argc > 1);
@@ -9,4 +11,5 @@ int main(int argc, char* argv[]) {
     printf("A\n");
     success();
   }
+  return 0;
 }

@@ -76,6 +76,7 @@ class Program:
         gives us better access to individual elements
         """
         arg1k = ['sym_arg_%d' % i for i in range(0, Max_Input_Len+1)]
+        self.arg1k8 = {i:'sym_arg_%d_%d_8' % (i,i) for i in range(0, Max_Input_Len+1)}
         self.arg1h = {k:claripy.BVS(k, 8) for k in arg1k}
         self.arg1h_ = {self.arg1h[k].args[0]:k for k in arg1k}
         self.arg1a = [self.arg1h[k] for k in arg1k]
@@ -106,7 +107,7 @@ class Program:
             db = set(reduce(lambda x, y: x.union(y), self.retrieve_char_constraints(self.state)))
             self.last_char_checked = 0
             for i in range(Max_Input_Len-1, -1, -1):
-                if ("sym_arg_%d_%d_8" % (i, i)) not in db: continue
+                if self.arg1k8[i] not in db: continue
                 if self.is_printable(self.arg1a[i]):
                     self.last_char_checked = i
                     break

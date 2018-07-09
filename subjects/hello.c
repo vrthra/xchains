@@ -1,8 +1,10 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-extern "C" void success() {
+void success() {
   printf("done!\n");
+  exit(0);
 }
 
 int main(int argc, char* argv[0]) {

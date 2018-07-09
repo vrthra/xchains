@@ -1,4 +1,4 @@
 
-bin/%: subjects/%.cc
-	g++ -fpermissive -o bin/$* -g subjects/$*.cc
-	@nm bin/pexpr | grep success
+bin/%: subjects/%.c
+	gcc -o bin/$* -g subjects/$*.c
+	@nm bin/$* | grep success

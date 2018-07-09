@@ -157,7 +157,7 @@ double ParseAtom(ExprEval* self, EVAL_CHAR** expr) {
 
 void success(float res) {
     printf("done\n");
-    //printf("<%2.6f>", res);
+    exit(0);
 }
 
 int main(int argc, char* argv[]) {
