@@ -22,23 +22,11 @@
 #ifndef NXJSON_C
 #define NXJSON_C
 
-#ifdef  __cplusplus
-extern "C" {
-#endif
-
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
-
-#ifndef NXJSON_H
-#define NXJSON_H
-
-#ifdef  __cplusplus
-extern "C" {
-#endif
 
 
 typedef enum nx_json_type {
@@ -431,13 +419,7 @@ const nx_json* nx_json_item(const nx_json* json, int idx) {
 }
 
 
-#ifdef  __cplusplus
-}
-#endif
-
-#endif  /* NXJSON_C */
-
-extern "C" void success() {
+void success() {
   printf("done!\n");
 }
 int main(int argc, char* argv[0]) {
@@ -445,7 +427,9 @@ int main(int argc, char* argv[0]) {
   const nx_json* json=nx_json_parse_utf8(argv[1]);
   if (json) {
     success();
+    return 0;
   } else {
     printf("error!\n");
+    return 1;
   }
 }
