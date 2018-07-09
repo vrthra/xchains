@@ -13,9 +13,7 @@ import claripy
 # weightage to the later states. If it is 0, it is same as
 # random sampling.
 Prob_Mul_Factor = 0
-
-# Count_Down because there may be no constraints at the tail
-Count_Down = True
+GC = False
 Closing_Threshold = 0.8
 Closing_Strip = True
 Closing_Buffer = 1000
@@ -23,9 +21,9 @@ Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
 Min_Input_Len = int(os.environ.get('MIN_INPUT', '0'))
 Success_Fn = os.environ.get('SUCCESS_FN', 'success')
 Random_Seed = int(os.environ.get('R', '0'))
-Prefer_Shortest_Strings = True
 random.seed(Random_Seed)
 
+Count_Down = range(Max_Input_Len-1, -1, -1)
 # Given a range of solutions, should we fix one solution
 # before we explore further?
 Quick_Fix = True
@@ -41,16 +39,20 @@ class Program:
         self.exe = exe
         # Use auto_load_libs = False to use symbolic summaries of libs
         self.project = angr.Project(exe, load_options={'auto_load_libs': False})
-        self.update_args()
+        self.success_fn = self.get_fn_addr(Success_Fn)
+
+        # generate arg1 from individual characters.
+        self.arg1 = self.update_args(Max_Input_Len, prefix='sym_arg')
+
+        # we use the argv[1] as the input.
         self.initial_state = self.project.factory.entry_state(args=[exe, self.arg1])
 
         # make sure that we try a maximum of Max_Input_Len chars
         self.initial_state.add_constraints(self.arg1a[Max_Input_Len] == 0)
+        # and we have sufficient constraints for minimal length
         for i in range(Min_Input_Len):
             self.initial_state.add_constraints(self.arg1a[i] != 0)
 
-        self.cfg = self.project.analyses.CFG(fail_fast=True)
-        self.success_fn = self.get_fn_addr(Success_Fn)
 
         self.state = self.initial_state
         self.update_constraint_rep(self.state)
@@ -59,38 +61,38 @@ class Program:
         self.extra_states = []
 
         self.last_char_checked = 0
-        self.update_checked_char()
+        self.update_checked_idx()
+
+    def is_successful(self, state):
+        return self.success_fn == state.addr
 
     def update_constraint_rep(self, state):
         """
-        The string representation of all constraints. Used to check if a
-        constraint has been updated
+        Used to check if a constraint has been updated
         """
         self.last_constraints = [claripy.simplify(c) for c in state.solver.constraints]
 
-    def update_args(self):
+    def update_args(self, input_len, prefix):
         """
         Various mappings to argument chars for easy access.
         Note that claripy.BVS('sym_arg', 8 * N) is equivalent
         to reduce(lambda x,y: x.concat(y), self.arg1a), but it
         gives us better access to individual elements
         """
-        arg1k = ['sym_arg_%d' % i for i in range(0, Max_Input_Len+1)]
-        self.arg1k8 = {i:'sym_arg_%d_%d_8' % (i,i) for i in range(0, Max_Input_Len+1)}
+        largs = range(0, input_len+1)
+        arg1k = ['%s_%d' % (prefix, i) for i in largs]
+        self.arg1k8 = {i:'%s_%d_%d_8' % (prefix, i,i) for i in largs}
         self.arg1h = {k:claripy.BVS(k, 8) for k in arg1k}
         self.arg1h_ = {self.arg1h[k].args[0]:k for k in arg1k}
         self.arg1a = [self.arg1h[k] for k in arg1k]
-        self.arg1 = reduce(lambda x,y: x.concat(y), self.arg1a)
+        return reduce(lambda x,y: x.concat(y), self.arg1a)
 
     def stack_depth(self, state):
-        stk = state.callstack
-        i = 0
-        while stk:
-            stk = stk.next
-            i += 1
+        stk, i = state.callstack, 0
+        while stk: stk, i = stk.next, i+1
         return i
 
-    def update_checked_char(self):
+    def update_checked_idx(self):
         """
         Update the last character that has been resolved (i.e. made printable)
         """
@@ -103,20 +105,23 @@ class Program:
         # might find quite a lot of \x001 which are not actually genuine
         # character constraints. Hence we explicitly look for printable
 
-        if Count_Down:
-            db = set(reduce(lambda x, y: x.union(y), self.retrieve_char_constraints(self.state)))
-            self.last_char_checked = 0
-            for i in range(Max_Input_Len-1, -1, -1):
-                if self.arg1k8[i] not in db: continue
-                if self.is_printable(self.arg1a[i]):
-                    self.last_char_checked = i
-                    break
-        else:
-            for i in range(self.last_char_checked+1, Max_Input_Len):
-                if not self.is_printable(self.arg1a[i]): break
-                self.last_char_checked = i
+        # First generate the set of character constraints.
+        db = set(reduce(lambda x, y: x.union(y),
+                         self.retrieve_vars_in_constraints(self.state)))
+        self.last_char_checked = 0
+        for i in Count_Down:
+            # If no constraints exist for this character, then this character
+            # has not been resolved yet.
+            if self.arg1k8[i] not in db: continue
+            # if the current character checked is not printable, then
+            # it stands to reason that it was not fully resolved. In which
+            # case, continue to the next loop.
+            if not self.is_printable(self.arg1a[i]): continue
+            # this is the first character to have been resolved fully.
+            self.last_char_checked = i
+            return i
 
-    def retrieve_char_constraints(self, state):
+    def retrieve_vars_in_constraints(self, state):
         return [state.solver.variables(c) for c in state.solver.constraints]
 
     def is_printable(self, char):
@@ -128,6 +133,8 @@ class Program:
         self.initial_state.add_constraints(char > 31)
 
     def get_fn_addr(self, fname):
+        if 'cfg' not in self.__dict__:
+            self.cfg = self.project.analyses.CFG(fail_fast=True)
         functions = self.cfg.kb.functions
         found = [addr for addr,f in functions.iteritems() if fname == f.name]
         assert len(found) == 1, "No address found for function : %s" % fname
@@ -140,22 +147,15 @@ class Program:
         """
         Return the zero termination of the argument string
         """
-        if Count_Down:
-            ret = 0
-            for i in range(Max_Input_Len-1, -1, -1):
-                # we count from the back. So if any character
-                # does not have zero as a solution, then its
-                # next character is the zero termination
-                if not state.solver.solution(self.arg1a[i], 0):
-                    ret = i + 1
-                    break
-            return ret
-        else:
-            for i in range(0, Max_Input_Len):
-                m = state.solver.min(self.arg1a[i])
-                if m == 0:
-                    return i
-            return Max_Input_Len
+        ret = 0
+        for i in Count_Down:
+            # we count from the back. So if any character
+            # does not have zero as a solution, then its
+            # next character is the zero termination
+            if not state.solver.solution(self.arg1a[i], 0):
+                ret = i + 1
+                break
+        return ret
 
     def range_at(self, state, at):
         c = self.arg1a[at]
@@ -180,7 +180,7 @@ class Program:
         the constraints generated by strlen.
         """
         assert states
-        self.update_checked_char()
+        self.update_checked_idx()
         last = self.last_char_checked
         (m, n) = self.range_at(self.state, last)
         ss = list(enumerate(states))
@@ -230,17 +230,10 @@ class Program:
         sl = len(states)
         arr = []
         for i in range(sl): arr.extend([i]*(1 + i*Prob_Mul_Factor))
-        i = random.randint(0, len(arr)-1)
-        si = arr[i]
+        si = arr[random.randint(0, len(arr)-1)]
         state = states[si]
         states.pop(si)
         return state, states
-
-        # i = random.randint(0, len(states)-1)
-        # state = states.pop(i)
-        # return state, states
-
-        # state = states.pop()
 
     def print_constraints(self):
         for i,c in enumerate(self.state.solver.constraints):
@@ -252,63 +245,61 @@ class Program:
         ysc = claripy.And(*ys)
         return claripy.backends.z3.identical(xsc, ysc)
 
+    def gc(self, states):
+        if not GC: return states
+        if not Closing_Strip: return states
+        if len(states) > Closing_Buffer:
+            print "start stripping from:", len(states)
+            # strip out all but best 100
+            ss = sorted([(self.stack_depth(s), i) for i, s in enumerate(states)])
+            ss = ss[0:Closing_Buffer]
+            states = [states[i] for d, i in ss]
+            return states
+        return states
+
     def gen_chains(self, state=None):
         states = self.states if self.states else []
         if not state: state = self.state
         while True:
-            if Closing_Strip:
-                if len(self.states) > Closing_Buffer:
-                    print "start stripping from:", len(self.states)
-                    # strip out all but best 100
-                    ss = sorted([(self.stack_depth(s), i) for i, s in enumerate(self.states)])
-                    ss = ss[0:Closing_Buffer]
-                    states = [self.states[i] for d, i in ss]
-                    self.states = states
+            if self.is_successful(state): return ('success',state)
+            states = self.gc(self.states)
             try:
-                if state.addr == self.success_fn: return ('success',state)
-                w("<")
-                w("%d+" % len(states))
+                w("<%d+" % len(states))
                 my_succ = state.step().flat_successors # succ.successors for symbolic
                 nsucc = len(my_succ)
                 w(str(nsucc))
                 w(">")
-                # time.sleep(1)
-                if nsucc == 0:
-                    # No active successors. This can be due to our Max_Input_Len
-                    # overshooting.
-                    log("<< %d" % len(states))
-                    w("(")
-                    self.last_char_checked = 0
+                if nsucc == 1:
                     w(".")
-                    if not states: return ('no_states', None)
-                    w(".")
-                    state, states = self.choose_a_previous_path(states)
-                    self.update_checked_char()
-                    w(")")
+                    state = my_succ.pop()
                     self.state = state
-                    self.states = states
+                    continue
+                if nsucc == 0:
+                    # No active successors.
+                    if not states: return ('no_states', None)
+                    log("<< %d(" % len(states))
+                    state, states = self.choose_a_previous_path(states)
+                    self.update_checked_idx()
+                    w("%d)" % self.last_char_checked)
+                    self.state, self.states = state, states
                 elif nsucc > 1:
                     w("{")
                     arg = self.get_args(state)
                     w(repr(arg))
                     w(",")
                     state, ss = self.choose_a_successor_state(my_succ)
-                    self.update_checked_char()
+                    self.update_checked_idx()
                     arg = self.get_args(state)
                     w(repr(arg))
                     w("}")
                     states.extend(ss)
-                    self.states = states
-                    self.state = state
-                else:
-                    w(".")
-                    state = my_succ[0]
-                    continue
+                    self.state, self.states = state, states
 
                 # were there any new chars?
                 w("[")
                 current_constraints = [claripy.simplify(c) for c in state.solver.constraints]
                 if not self.identical_constraints(current_constraints, self.last_constraints):
+                    # TODO: get the last variable checked.
                     self.last_constraints = current_constraints
                     # were there any constraints?
                     if  self.is_printable(self.arg1a[self.last_char_checked+1]):
@@ -336,10 +327,12 @@ class Program:
                 log('unsat.. %s' % str(ue))
                 if not states: return ('no_states', None)
                 state, states = self.choose_a_previous_path(states)
+                self.state, self.states = state, states
+                self.update_checked_idx()
 
     def get_constraint_db(self):
         constraint_db = {}
-        for vi in self.retrieve_char_constraints(self.state):
+        for vi in self.retrieve_vars_in_constraints(self.state):
             # there could be multiple variables in a constraint
             # vi is a set of variables.
             for i in vi:
@@ -374,7 +367,7 @@ def main(exe):
             print status
             prog.print_args(state)
             if status == 'success':
-                prog.update_checked_char()
+                prog.update_checked_idx()
                 print >>f, "<%s>" % repr(prog.get_args(state))
                 if Show_Range:
                     minval = []
@@ -395,9 +388,3 @@ def main(exe):
             prog.state = prog.states.pop()
 
 main(sys.argv[1])
-
-# state = prog.gen_chains()
-# print("----------------")
-# cdb = prog.get_constraint_db()
-# for i in cdb: print i, cdb[i]
-
