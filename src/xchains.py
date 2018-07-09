@@ -36,6 +36,12 @@ def w(v):
 
 def log(v): w("\t%s\n" % v)
 
+def cstr(s):
+    for i in range(len(s)):
+        if s[i] == '\x00':
+           return s[0:i]
+    return s
+
 class Program:
     def __init__(self, exe):
         self.exe = exe
@@ -55,11 +61,15 @@ class Program:
         self.state = self.initial_state
         self.update_constraint_rep(self.state)
 
-        self.states = []
+        self.states = {}
         self.extra_states = []
+        self.deleted_keys = set()
 
         self.last_char_checked = 0
         self.update_checked_char()
+
+        self.h_strlen = {}
+        self.h_stack_depth = {}
 
     def update_constraint_rep(self, state):
         """
@@ -82,11 +92,15 @@ class Program:
         self.arg1 = reduce(lambda x,y: x.concat(y), self.arg1a)
 
     def stack_depth(self, state):
+        sr = str(state)
+        if sr in self.h_stack_depth: return self.h_stack_depth[sr]
+
         stk = state.callstack
         i = 0
         while stk:
             stk = stk.next
             i += 1
+        self.h_stack_depth[sr] = i
         return i
 
     def update_checked_char(self):
@@ -107,7 +121,7 @@ class Program:
             self.last_char_checked = 0
             for i in range(Max_Input_Len-1, -1, -1):
                 if ("sym_arg_%d_%d_8" % (i, i)) not in db: continue
-                if self.is_printable(self.arg1a[i]):
+                if self.is_not_zero(self.arg1a[i]):
                     self.last_char_checked = i
                     break
         else:
@@ -117,6 +131,8 @@ class Program:
 
     def retrieve_char_constraints(self, state):
         return [state.solver.variables(c) for c in state.solver.constraints]
+
+    def is_not_zero(self, char): return self.state.solver.min(char) > 0
 
     def is_printable(self, char):
         m, n = self.state.solver.min(char), self.state.solver.max(char)
@@ -139,6 +155,8 @@ class Program:
         """
         Return the zero termination of the argument string
         """
+        sr = str(state)
+        if sr in self.h_strlen: return self.h_strlen[sr]
         if Count_Down:
             ret = 0
             for i in range(Max_Input_Len-1, -1, -1):
@@ -148,6 +166,7 @@ class Program:
                 if not state.solver.solution(self.arg1a[i], 0):
                     ret = i + 1
                     break
+            self.h_strlen[sr] = ret
             return ret
         else:
             for i in range(0, Max_Input_Len):
@@ -218,28 +237,26 @@ class Program:
         state = states.pop(rand_i)
         return state, states
 
-    def choose_a_previous_path(self, states):
+    def update_states(self, states):
+        for s in states:
+            arg = self.get_args(s)
+            if arg in self.deleted_keys: continue
+            # if arg not in self.states:
+            self.states[arg] = s
+
+    def choose_a_previous_path(self):
         """
         Choises: Choose the last state, choose a random state, use a heuristic
         Heuristic: Rather than go for random state, or the last
         state, choose the last states with more probability than the first
         ones.
         """
-        assert states
-        sl = len(states)
-        arr = []
-        for i in range(sl): arr.extend([i]*(1 + i*Prob_Mul_Factor))
-        i = random.randint(0, len(arr)-1)
-        si = arr[i]
-        state = states[si]
-        states.pop(si)
-        return state, states
-
-        # i = random.randint(0, len(states)-1)
-        # state = states.pop(i)
-        # return state, states
-
-        # state = states.pop()
+        ss = self.states
+        key = random.choice(ss.keys())
+        state = ss[key]
+        del self.states[key]
+        self.deleted_keys.add(key)
+        return state
 
     def print_constraints(self):
         for i,c in enumerate(self.state.solver.constraints):
@@ -252,21 +269,23 @@ class Program:
         return claripy.backends.z3.identical(xsc, ysc)
 
     def gen_chains(self, state=None):
-        states = self.states if self.states else []
         if not state: state = self.state
         while True:
-            if Closing_Strip:
-                if len(self.states) > Closing_Buffer:
-                    print "start stripping from:", len(self.states)
-                    # strip out all but best 100
-                    ss = sorted([(self.stack_depth(s), i) for i, s in enumerate(self.states)])
-                    ss = ss[0:Closing_Buffer]
-                    states = [self.states[i] for d, i in ss]
-                    self.states = states
+            # if Closing_Strip:
+            #     if len(self.states) > Closing_Buffer:
+            #         print "\n"
+            #         print "start stripping from:", len(self.states)
+            #         # strip out all but best 100
+            #         ss = sorted([(self.stack_depth(s), i) for i, s in enumerate(self.states)])
+            #         for d,i in ss[Closing_Buffer-1:-1]:
+            #             print "killing off"
+            #             print "\t", repr(self.get_args(self.states[i]))
+            #         ss = ss[0:Closing_Buffer]
+            #         states = [self.states[i] for d, i in ss]
+            #         self.states = states
             try:
                 if state.addr == self.success_fn: return ('success',state)
                 w("<")
-                w("%d+" % len(states))
                 my_succ = state.step().flat_successors # succ.successors for symbolic
                 nsucc = len(my_succ)
                 w(str(nsucc))
@@ -275,17 +294,14 @@ class Program:
                 if nsucc == 0:
                     # No active successors. This can be due to our Max_Input_Len
                     # overshooting.
-                    log("<< %d" % len(states))
                     w("(")
                     self.last_char_checked = 0
+                    if not self.states: return ('no_states', None)
                     w(".")
-                    if not states: return ('no_states', None)
-                    w(".")
-                    state, states = self.choose_a_previous_path(states)
+                    state = self.choose_a_previous_path()
                     self.update_checked_char()
                     w(")")
                     self.state = state
-                    self.states = states
                 elif nsucc > 1:
                     w("{")
                     arg = self.get_args(state)
@@ -296,9 +312,8 @@ class Program:
                     arg = self.get_args(state)
                     w(repr(arg))
                     w("}")
-                    states.extend(ss)
-                    self.states = states
                     self.state = state
+                    self.update_states(ss)
                 else:
                     w(".")
                     state = my_succ[0]
@@ -310,7 +325,7 @@ class Program:
                 if not self.identical_constraints(current_constraints, self.last_constraints):
                     self.last_constraints = current_constraints
                     # were there any constraints?
-                    if  self.is_printable(self.arg1a[self.last_char_checked+1]):
+                    if  self.is_not_zero(self.arg1a[self.last_char_checked+1]):
                         # log("adding: %s at %d" % (chr(m), self.last_char_checked))
                         # now concretize
                         # TODO: save the state with opposite constraints after
@@ -334,7 +349,7 @@ class Program:
             except angr.errors.SimUnsatError, ue:
                 log('unsat.. %s' % str(ue))
                 if not states: return ('no_states', None)
-                state, states = self.choose_a_previous_path(states)
+                state = self.choose_a_previous_path()
 
     def get_constraint_db(self):
         constraint_db = {}
@@ -352,12 +367,8 @@ class Program:
         return constraint_db
 
     def get_args(self, state):
-        #return state.solver.eval(self.arg1, cast_to=str)[0:self.last_char_checked+1]
         val = state.solver.eval(self.arg1, cast_to=str)
-        for i in range(len(val)):
-            if val[i] == '\x00':
-                return val[0:i]
-        return val
+        return cstr(val)
 
     def print_args(self, state):
         for i in state.solver.eval_upto(self.arg1, 1, cast_to=str):
@@ -391,7 +402,7 @@ def main(exe):
             if not prog.states:
                 print "No more states extra_states:", len(prog.extra_states)
                 break
-            prog.state = prog.states.pop()
+            prog.state = prog.choose_a_previous_path()
 
 main(sys.argv[1])
 
