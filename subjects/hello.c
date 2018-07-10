@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+/*produces 2^5 hellos*/
 
 void success() {
   printf("done!\n");

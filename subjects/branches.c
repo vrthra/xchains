@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-extern "C" void success() {
+void success() {
     printf("succes!\n");
     exit(0);
 }
