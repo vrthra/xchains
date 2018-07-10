@@ -6,6 +6,7 @@ import time
 import angr
 import random
 import claripy
+from ptpython.repl import embed
 
 # How to choose the next state. The Prob_Mul_Factor skews the
 # probability distribution of choise of elements from the list
@@ -17,7 +18,7 @@ GC = False
 Closing_Threshold = 0.8
 Closing_Strip = True
 Closing_Buffer = 1000
-Max_Input_Len = int(os.environ.get('MAX_INPUT', '10'))
+Max_Input_Len = int(os.environ.get('MAX_INPUT', '100'))
 Min_Input_Len = int(os.environ.get('MIN_INPUT', '0'))
 Success_Fn = os.environ.get('SUCCESS_FN', 'success')
 Random_Seed = int(os.environ.get('R', '0'))
@@ -35,33 +36,31 @@ def w(v):
 def log(v): w("\t%s\n" % v)
 
 class Program:
-    def __init__(self, exe):
+    def __init__(self, exe, input_len, ranges):
         self.exe = exe
         # Use auto_load_libs = False to use symbolic summaries of libs
         self.project = angr.Project(exe, load_options={'auto_load_libs': False})
         self.success_fn = self.get_fn_addr(Success_Fn)
 
+        self.input_len = input_len
         # generate arg1 from individual characters.
-        self.arg1 = self.update_args(Max_Input_Len, prefix='sym_arg')
+        self.arg1 = self.update_args(self.input_len, prefix='sym_arg')
 
         # we use the argv[1] as the input.
         self.initial_state = self.project.factory.entry_state(args=[exe, self.arg1])
 
-        # make sure that we try a maximum of Max_Input_Len chars
-        self.initial_state.add_constraints(self.arg1a[Max_Input_Len] == 0)
+        # make sure that we try a maximum of input_len chars
+        self.initial_state.add_constraints(self.arg1a[self.input_len] == 0)
         # and we have sufficient constraints for minimal length
-        for i in range(Min_Input_Len):
+        for i in range(self.input_len):
             self.initial_state.add_constraints(self.arg1a[i] != 0)
 
-
-        self.state = self.initial_state
-        self.update_constraint_rep(self.state)
-
-        self.states = []
-        self.extra_states = []
-
-        self.last_char_checked = 0
-        self.update_checked_idx()
+        for i, (_min, _max) in enumerate(ranges):
+            assert not (_min == _max and _max == 0)
+            if _min > 0:
+                self.initial_state.add_constraints(self.arg1a[i] >= _min)
+            if _max < 255:
+                self.initial_state.add_constraints(self.arg1a[i] <= _max)
 
     def is_successful(self, state):
         return self.success_fn == state.addr
@@ -82,7 +81,7 @@ class Program:
         largs = range(0, input_len+1)
         arg1k = ['%s_%d' % (prefix, i) for i in largs]
         self.arg1k8 = {i:'%s_%d_%d_8' % (prefix, i,i) for i in largs}
-        self.arg1h = {k:claripy.BVS(k, 8) for k in arg1k}
+        self.arg1h = {k:claripy.BVS(k, 8, explicit_name=k) for k in arg1k}
         self.arg1h_ = {self.arg1h[k].args[0]:k for k in arg1k}
         self.arg1a = [self.arg1h[k] for k in arg1k]
         return reduce(lambda x,y: x.concat(y), self.arg1a)
@@ -152,16 +151,22 @@ class Program:
             # we count from the back. So if any character
             # does not have zero as a solution, then its
             # next character is the zero termination
-            if not state.solver.solution(self.arg1a[i], 0):
+            if not state.solver.max(self.arg1a[i], 0):
                 ret = i + 1
                 break
         return ret
 
+    def mmx(self, state, char):
+        return (state.solver.min(char), state.solver.max(char))
+
     def range_at(self, state, at):
         c = self.arg1a[at]
-        return (state.solver.min(c), state.solver.max(c))
+        return self.mmx (state, c)
 
     def choose_a_successor_state(self, states):
+        i = random.randint(0, len(states)-1)
+        state = states.pop(i)
+        return state, states
         """
         Which successor state to expand? We may apply various heuristics here
         First, we sort by the smallest strings (zero starting). Then choose
@@ -220,6 +225,9 @@ class Program:
         return state, states
 
     def choose_a_previous_path(self, states):
+        i = random.randint(0, len(states)-1)
+        state = states.pop(i)
+        return state, states
         """
         Choises: Choose the last state, choose a random state, use a heuristic
         Heuristic: Rather than go for random state, or the last
@@ -257,134 +265,83 @@ class Program:
             return states
         return states
 
-    def gen_chains(self, state=None):
-        states = self.states if self.states else []
-        if not state: state = self.state
+    def get_char_range(self, state):
+        return [self.mmx(state, c) for c in self.arg1a]
+
+    def gen_chains(self, state):
+        states = []
         while True:
             if self.is_successful(state): return ('success',state)
-            states = self.gc(self.states)
             try:
-                w("<%d+" % len(states))
-                my_succ = state.step().flat_successors # succ.successors for symbolic
+                succ = state.step() # try
+                my_succ =  [(state, s) for s in succ.flat_successors]
                 nsucc = len(my_succ)
-                w(str(nsucc))
-                w(">")
                 if nsucc == 1:
-                    w(".")
-                    state = my_succ.pop()
-                    self.state = state
+                    (pstate, state) = my_succ.pop()
                     continue
                 if nsucc == 0:
                     # No active successors.
-                    if not states: return ('no_states', None)
-                    log("<< %d(" % len(states))
-                    state, states = self.choose_a_previous_path(states)
-                    self.update_checked_idx()
-                    w("%d)" % self.last_char_checked)
-                    self.state, self.states = state, states
+                    if not states:
+                        return ('no_states', state)
+                    (pstate, state), states = self.choose_a_previous_path(states)
                 elif nsucc > 1:
-                    w("{")
-                    arg = self.get_args(state)
-                    w(repr(arg))
-                    w(",")
-                    state, ss = self.choose_a_successor_state(my_succ)
-                    self.update_checked_idx()
-                    arg = self.get_args(state)
-                    w(repr(arg))
-                    w("}")
+                    (pstate, state), ss = self.choose_a_successor_state(my_succ)
                     states.extend(ss)
-                    self.state, self.states = state, states
 
-                # were there any new chars?
-                w("[")
-                current_constraints = [claripy.simplify(c) for c in state.solver.constraints]
-                if not self.identical_constraints(current_constraints, self.last_constraints):
-                    # TODO: get the last variable checked.
-                    self.last_constraints = current_constraints
-                    # were there any constraints?
-                    if  self.is_printable(self.arg1a[self.last_char_checked+1]):
-                        # log("adding: %s at %d" % (chr(m), self.last_char_checked))
-                        # now concretize
-                        # TODO: save the state with opposite constraints after
-                        # checking unsat
-                        val = state.solver.eval(self.arg1a[self.last_char_checked])
-                        w("@%d: %s" % (self.last_char_checked, chr(val)))
+                val = pstate.solver.eval(self.arg1, cast_to=str)
+                log("<%s>" % val)
+                # was there a change in constraints?
+                parent_ranges = self.get_char_range(pstate)
+                current_ranges = self.get_char_range(state)
 
-                        # check if an equality operator is involved
-                        c = self.arg1a[self.last_char_checked]
-                        if Quick_Fix and state.solver.max(c) != state.solver.min(c):
-                            not_state = state.copy()
-                            not_state.add_constraints(c != val)
-                            self.extra_states.append(not_state)
-                            state.add_constraints(c == val)
-                        self.update_constraint_rep(state)
-                        log("]")
-                    else:
-                        # the constraint added was not one on the input character
-                        # hence we ignore.
-                        w("x]")
+                _min, _max = 0, 1
+                updated_idx = -1
+                for i, (p, c) in enumerate(zip(parent_ranges, current_ranges)):
+                    if p != c:
+                        assert p[_min] <= c[_min] and p[_max] >= c[_max]
+                        updated_idx = i
+                        # commit here
+                        # states = []
+                        char = chr(random.randint(c[0], c[1]))
+                        log("@%d <%s>" % (updated_idx, char))
+                        break
+
             except angr.errors.SimUnsatError, ue:
-                log('unsat.. %s' % str(ue))
-                if not states: return ('no_states', None)
-                state, states = self.choose_a_previous_path(states)
-                self.state, self.states = state, states
-                self.update_checked_idx()
+                embed(globals(), locals())
 
-    def get_constraint_db(self):
-        constraint_db = {}
-        for vi in self.retrieve_vars_in_constraints(self.state):
-            # there could be multiple variables in a constraint
-            # vi is a set of variables.
-            for i in vi:
-                if i in self.arg1h_:
-                    v = self.arg1h_[i]
-                    if v not in constraint_db: constraint_db[v] = 0
-                    constraint_db[v] += 1
-                else:
-                    pass
-                    #log("? %s" % i)
-        return constraint_db
+    def cstr(self, val):
+        for i in range(len(val)):
+            if val[i] == '\x00':
+                return val[0:i]
+        return val
 
     def get_args(self, state):
-        #return state.solver.eval(self.arg1, cast_to=str)[0:self.last_char_checked+1]
         val = state.solver.eval(self.arg1, cast_to=str)
         for i in range(len(val)):
             if val[i] == '\x00':
                 return val[0:i]
         return val
 
-    def print_args(self, state):
+    def print_args(self, state, il):
         for i in state.solver.eval_upto(self.arg1, 1, cast_to=str):
-            log(repr(i[0:self.last_char_checked+1])) #.strip('\x00\xff')))
+            log(repr(i)) #.strip('\x00\xff')))
 
-Show_Range = False
 def main(exe):
-    prog = Program(exe)
+    import pudb; 
     status, state = None, None
+    ranges = []
     with open("results.txt", "w+") as f:
-        while True:
-            status, state = prog.gen_chains()
+        for inp_len in range(Max_Input_Len):
+            # pudb.set_trace(inp_len == 9)
+            log("input_len: %d" % inp_len)
+            prog = Program(exe, inp_len, [])
+            status, state = prog.gen_chains(prog.initial_state)
             print status
-            prog.print_args(state)
             if status == 'success':
-                prog.update_checked_idx()
+                prog.print_args(state, inp_len)
                 print >>f, "<%s>" % repr(prog.get_args(state))
-                if Show_Range:
-                    minval = []
-                    maxval = []
-                    for i in range(prog.last_char_checked+1):
-                        c = prog.arg1a[i]
-                        x, y = state.solver.min(c), state.solver.max(c)
-                        minval.append(chr(x))
-                        maxval.append(chr(y))
-                    print >>f, "min:", repr("".join(minval))
-                    print >>f, "max:", repr("".join(maxval))
-                # print >>f, "\t (%s)" % repr(i[0:prog.last_char_checked+1])
                 f.flush()
-            log("remaining: %d" % len(prog.states))
-            if not prog.states:
-                print "No more states extra_states:", len(prog.extra_states)
-                break
-            prog.state = prog.states.pop()
-
+                ranges = []
+            elif status == 'no_states':
+                ranges = prog.get_char_range(state)[0:-1]
 main(sys.argv[1])
