@@ -12,21 +12,22 @@ int main(int argc, char* argv[0]) {
   assert(argc > 1);
   char* s = argv[1];
   char h = s[0];
-  s++;
   assert((h == 'h') || (h == 'H'));
+  s++;
   char e = s[0];
-  s++;
   assert((e == 'e') || (e == 'E'));
+  s++;
   char l1 = s[0];
-  s++;
   assert((l1 == 'l') || (l1 == 'L'));
+  s++;
   char l2 = s[0];
-  s++;
   assert((l2 == 'l') || (l2 == 'L'));
-  char o = s[0];
   s++;
+  char o = s[0];
   assert((o == 'o') || (o == 'O'));
-
+  s++;
+  char end = s[0];
+  assert(end == 0);
   success();
   return 0;
 }
