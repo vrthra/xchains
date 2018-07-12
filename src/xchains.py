@@ -42,18 +42,20 @@ def w(v):
 def log(v): w("\t%s\n" % v)
 
 class Program:
-    def __init__(self, exe, input_len, constraint_range, refused_range):
+    def __init__(self, exe):
         self.exe = exe
         # Use auto_load_libs = False to use symbolic summaries of libs
         self.project = angr.Project(exe, load_options={'auto_load_libs': False})
         self.success_fn = self.get_fn_addr(Success_Fn)
+
+    def update(self, input_len, constraint_range, refused_range):
 
         self.input_len = input_len
         # generate arg1 from individual characters.
         self.arg1 = self.update_args(self.input_len, prefix='sym_arg')
 
         # we use the argv[1] as the input.
-        self.initial_state = self.project.factory.entry_state(args=[exe, self.arg1])
+        self.initial_state = self.project.factory.entry_state(args=[self.exe, self.arg1])
 
         # make sure that we try a maximum of input_len chars
         self.initial_state.add_constraints(self.arg1a[self.input_len] == 0)
@@ -366,6 +368,7 @@ def main(exe):
     status, state = None, None
     constraint_range = []
     checked_constraints = {}
+    prog = Program(exe)
     with open("results.txt", "w+") as f:
         my_iter = iter(range(Max_Input_Len))
         inp_len = next(my_iter)
@@ -373,7 +376,7 @@ def main(exe):
             # pudb.set_trace(inp_len == 9)
             log("input_len: %d" % inp_len)
             print "Applying constraint:<%s>" % constraint_to_chr(constraint_range)
-            prog = Program(exe, inp_len, constraint_range, checked_constraints)
+            prog.update(inp_len, constraint_range, checked_constraints)
             status, state = prog.gen_chains(prog.initial_state)
             print status
             if status == R.SUCCESS:
