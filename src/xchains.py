@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from enum import Enum
 import sys
 import os
 import time
@@ -23,11 +24,16 @@ Min_Input_Len = int(os.environ.get('MIN_INPUT', '0'))
 Success_Fn = os.environ.get('SUCCESS_FN', 'success')
 Random_Seed = int(os.environ.get('R', '0'))
 random.seed(Random_Seed)
+_min, _max = 0, 1
 
 Count_Down = range(Max_Input_Len-1, -1, -1)
 # Given a range of solutions, should we fix one solution
 # before we explore further?
 Quick_Fix = True
+
+class R(Enum):
+    NO_STATES = 0
+    SUCCESS = 1
 
 def w(v):
     sys.stderr.write(v)
@@ -36,7 +42,7 @@ def w(v):
 def log(v): w("\t%s\n" % v)
 
 class Program:
-    def __init__(self, exe, input_len, ranges):
+    def __init__(self, exe, input_len, constraint_range, refused_range):
         self.exe = exe
         # Use auto_load_libs = False to use symbolic summaries of libs
         self.project = angr.Project(exe, load_options={'auto_load_libs': False})
@@ -55,12 +61,17 @@ class Program:
         for i in range(self.input_len):
             self.initial_state.add_constraints(self.arg1a[i] != 0)
 
-        for i, (_min, _max) in enumerate(ranges):
+        for i, (_min, _max) in enumerate(constraint_range):
             assert not (_min == _max and _max == 0)
             if _min > 0:
                 self.initial_state.add_constraints(self.arg1a[i] >= _min)
             if _max < 255:
                 self.initial_state.add_constraints(self.arg1a[i] <= _max)
+
+        for pos in refused_range:
+            arr = refused_range[pos]
+            for (_min, _max) in arr:
+                self.initial_state.add_constraints(self.initial_state.solver.Or(self.arg1a[pos] < _min,self.arg1a[pos] > _max))
 
     def is_successful(self, state):
         return self.success_fn == state.addr
@@ -271,7 +282,7 @@ class Program:
     def gen_chains(self, state):
         states = []
         while True:
-            if self.is_successful(state): return ('success',state)
+            if self.is_successful(state): return (R.SUCCESS,state)
             try:
                 succ = state.step() # try
                 my_succ =  [(state, s) for s in succ.flat_successors]
@@ -282,28 +293,30 @@ class Program:
                 if nsucc == 0:
                     # No active successors.
                     if not states:
-                        return ('no_states', state)
+                        return (R.NO_STATES, state)
                     (pstate, state), states = self.choose_a_previous_path(states)
                 elif nsucc > 1:
                     (pstate, state), ss = self.choose_a_successor_state(my_succ)
                     states.extend(ss)
 
-                val = pstate.solver.eval(self.arg1, cast_to=str)
-                log("<%s>" % val)
+                val = constraint_to_chr(self.get_char_range(state))
+                print "> %s" % repr(val)
                 # was there a change in constraints?
                 parent_ranges = self.get_char_range(pstate)
                 current_ranges = self.get_char_range(state)
 
-                _min, _max = 0, 1
                 updated_idx = -1
                 for i, (p, c) in enumerate(zip(parent_ranges, current_ranges)):
                     if p != c:
                         assert p[_min] <= c[_min] and p[_max] >= c[_max]
                         updated_idx = i
                         # commit here
-                        # states = []
-                        char = chr(random.randint(c[0], c[1]))
-                        log("@%d <%s>" % (updated_idx, char))
+                        states = []
+                        # char = chr(random.randint(c[_min], c[_max]))
+                        if c[_min] != c[_max]:
+                            log("@%d [%s-%s]" % (updated_idx, chr(c[_min]), chr(c[_max])))
+                        else:
+                            log("@%d [%s]" % (updated_idx, chr(c[_min])))
                         break
 
             except angr.errors.SimUnsatError, ue:
@@ -326,22 +339,66 @@ class Program:
         for i in state.solver.eval_upto(self.arg1, 1, cast_to=str):
             log(repr(i)) #.strip('\x00\xff')))
 
+def constraint_to_chr(r):
+    arr = []
+    for (min_,max_) in r:
+        if min_ == max_:
+            arr.append(chr(min_))
+        else:
+            # c = chr(random.randint(a, b))
+            c = chr(min_)
+            arr.append(c)
+    return "".join(arr)
+
+import pudb; 
+import bdb; 
+def update_constraints(constraint_range, pos, refuse_range):
+    #pudb.set_trace()
+    v = constraint_range.pop()
+    assert v == (1, 255)
+    last = constraint_range.pop()
+    # take the range that is between min
+    if pos not in refuse_range: refuse_range[pos] = []
+    refuse_range[pos].append(last)
+    return constraint_range
+
 def main(exe):
-    import pudb; 
     status, state = None, None
-    ranges = []
+    constraint_range = []
+    checked_constraints = {}
     with open("results.txt", "w+") as f:
-        for inp_len in range(Max_Input_Len):
+        my_iter = iter(range(Max_Input_Len))
+        inp_len = next(my_iter)
+        while True:
             # pudb.set_trace(inp_len == 9)
             log("input_len: %d" % inp_len)
-            prog = Program(exe, inp_len, [])
+            print "Applying constraint:<%s>" % constraint_to_chr(constraint_range)
+            prog = Program(exe, inp_len, constraint_range, checked_constraints)
             status, state = prog.gen_chains(prog.initial_state)
             print status
-            if status == 'success':
-                prog.print_args(state, inp_len)
-                print >>f, "<%s>" % repr(prog.get_args(state))
+            if status == R.SUCCESS:
+                val = constraint_to_chr(prog.get_char_range(state))
+                print "SUCCESS: %s" % repr(val)
+                print >>f, "<%s>" % repr(val)
                 f.flush()
-                ranges = []
-            elif status == 'no_states':
-                ranges = prog.get_char_range(state)[0:-1]
-main(sys.argv[1])
+                constraint_range = []
+            elif status == R.NO_STATES:
+                # all except the last zero termination.
+                constraint_range = prog.get_char_range(state)[0:-1]
+                print "NOSTATES: %s" % repr(constraint_to_chr(constraint_range))
+                # check the last but one state. If it is not changed, it is time
+                # to update constraint.
+                if constraint_range:
+                    if constraint_range[inp_len-1] == (1, 255): # -1
+                        # first strip out the last
+                        constraint_range = update_constraints(constraint_range,
+                                inp_len-2, checked_constraints)
+                        continue
+                        
+            else:
+                print "OTHER"
+            inp_len = next(my_iter)
+try:
+    main(sys.argv[1])
+except (KeyboardInterrupt, SystemExit, bdb.BdbQuit):
+    sys.exit(0)
