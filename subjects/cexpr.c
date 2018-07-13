@@ -33,6 +33,7 @@ double ParseFactors(ExprEval* self, EVAL_CHAR** expr);
 // Parse multiplication and division
 double ParseFactors(ExprEval* self, EVAL_CHAR** expr) {
     double num1 = ParseAtom(self, expr);
+    assert(self->_err == EEE_NO_ERROR);
     for(;;) {
         // Save the operation and position
         EVAL_CHAR op = **expr;
@@ -41,6 +42,7 @@ double ParseFactors(ExprEval* self, EVAL_CHAR** expr) {
             return num1;
         expr++;
         double num2 = ParseAtom(self, expr);
+        assert(self->_err == EEE_NO_ERROR);
         // Perform the saved operation
         if(op == '/') {
             // Handle division by zero
@@ -58,12 +60,14 @@ double ParseFactors(ExprEval* self, EVAL_CHAR** expr) {
 // Parse addition and subtraction
 double ParseSummands(ExprEval* self, EVAL_CHAR** expr) {
     double num1 = ParseFactors(self, expr);
+      assert(self->_err == EEE_NO_ERROR);
     for(;;) {
         EVAL_CHAR op = **expr;
         if(op != '-' && op != '+')
             return num1;
         (*expr)++;
         double num2 = ParseFactors(self, expr);
+        assert(self->_err == EEE_NO_ERROR);
         if(op == '-')
             num1 -= num2;
         else
@@ -112,6 +116,7 @@ double ParseAtom(ExprEval* self, EVAL_CHAR** expr) {
         (*expr)++;
         self->_paren_count++;
         double res = ParseSummands(self, expr);
+        assert(self->_err == EEE_NO_ERROR);
         if(**expr != ')') {
             // Unmatched opening parenthesis
             self->_err = EEE_PARENTHESIS;
