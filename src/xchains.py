@@ -256,43 +256,43 @@ def update_constraints(constraint_range, pos, refuse_range):
     refuse_range[pos].append(last)
     return constraint_range
 
-def main(exe):
+def main(exe, out):
     status, state = None, None
     constraint_range = []
     checked_constraints = {}
     prog = Program(exe)
-    with open("results.txt", "w+") as f:
-        my_iter = iter(range(Max_Input_Len))
-        inp_len = next(my_iter)
-        while True:
-            log("input_len: %d" % inp_len)
-            print "Applying constraint:<%s>" % constraint_to_chr(constraint_range)
-            prog.update(inp_len, constraint_range, checked_constraints)
-            status, state = prog.gen_chains(prog.initial_state)
-            print status
-            if status == R.SUCCESS:
-                val = constraint_to_chr(prog.get_char_range(state), True)
-                print "SUCCESS: %s" % repr(val)
-                print >>f, "<%s>" % repr(val)
-                f.flush()
-                constraint_range = []
-            elif status == R.NO_STATES:
-                # all except the last zero termination.
-                constraint_range = prog.get_char_range(state)[0:-1]
-                print "NOSTATES: %s" % repr(constraint_to_chr(constraint_range, True))
-                # check the last but one state. If it is not changed, it is time
-                # to update constraint.
-                if constraint_range:
-                    if constraint_range[inp_len-1] == (1, 255): # -1
-                        # first strip out the last
-                        constraint_range = update_constraints(constraint_range,
-                                inp_len-2, checked_constraints)
-                        continue
 
-            else:
-                print "OTHER"
-            inp_len = next(my_iter)
+    my_iter = iter(range(Max_Input_Len))
+    inp_len = next(my_iter)
+    while True:
+        log("input_len: %d" % inp_len)
+        print "Applying constraint:<%s>" % constraint_to_chr(constraint_range)
+        prog.update(inp_len, constraint_range, checked_constraints)
+        status, state = prog.gen_chains(prog.initial_state)
+        print status
+        if status == R.SUCCESS:
+            val = constraint_to_chr(prog.get_char_range(state), True)
+            print "SUCCESS: %s" % repr(val)
+            print >>out, "<%s>" % repr(val)
+            out.flush()
+            constraint_range = []
+        elif status == R.NO_STATES:
+            # all except the last zero termination.
+            constraint_range = prog.get_char_range(state)[0:-1]
+            print "NOSTATES: %s" % repr(constraint_to_chr(constraint_range, True))
+            # check the last but one state. If it is not changed, it is time
+            # to update constraint.
+            if constraint_range:
+                if constraint_range[inp_len-1] == (1, 255): # -1
+                    # first strip out the last
+                    constraint_range = update_constraints(constraint_range,
+                            inp_len-2, checked_constraints)
+                    continue
+
+        else:
+            print "OTHER"
+        inp_len = next(my_iter)
 try:
-    main(sys.argv[1])
-except (KeyboardInterrupt, SystemExit, bdb.BdbQuit):
+    with open("results.txt", "w+") as f: main(sys.argv[1], f)
+except (KeyboardInterrupt, SystemExit, bdb.BdbQuit, StopIteration):
     sys.exit(0)
