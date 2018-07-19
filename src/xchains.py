@@ -16,7 +16,7 @@ from ptpython.repl import embed
 # random sampling.
 Prob_Mul_Factor = 0
 Max_Input_Len = int(os.environ.get('MAX_INPUT', '100'))
-Success_Fn = os.environ.get('SUCCESS_FN', 'success')
+Success_Fn = os.environ.get('SUCCESS_FN', 'my_success')
 Random_Seed = int(os.environ.get('R', '0'))
 random.seed(Random_Seed)
 _min, _max = 0, 1
@@ -39,6 +39,10 @@ def w(v):
     sys.stderr.flush()
 
 def log(v): w("\t%s\n" % v)
+
+def mmx(state, char):
+    return (state.solver.min(char), state.solver.max(char))
+
 
 def constraint_to_chr(my_ranges, interpret=I.RANGE):
     def to_char(min_, max_, i):
@@ -68,6 +72,13 @@ class Program:
         assert len(found) == 1, "No address found for function : %s" % fname
         return found[0]
 
+    def stack_trace(self, state):
+        stk = state.callstack
+        while stk:
+            if stk.func_addr in self.cfg.kb.functions:
+                print "|\t", self.cfg.kb.functions[stk.func_addr].name
+            stk = stk.next
+
     def is_successful(self, state): return self.success_fn == state.addr
 
     def update(self, input_len, constraint_range, refused_range):
@@ -94,11 +105,21 @@ class Program:
         # These are characters that, _given all the other characters in front_
         # should not be used because they were refused previously.
         for pos in refused_range:
+            if pos >= input_len: continue
             arr = refused_range[pos]
             char = self.arg1a[pos]
             for (_min, _max) in arr:
                 remove = self.initial_state.solver.Or(char < _min, char > _max)
                 self.initial_state.add_constraints(remove)
+
+        self.simgr = self.project.factory.simulation_manager(self.initial_state)
+        old_state = None
+        # now step until we come to the forking state.
+        while len(self.simgr.active) == 1:
+            old_state = self.simgr.active[0]
+            self.simgr.step()
+        return old_state
+
 
     def update_args(self, input_len, prefix):
         """
@@ -120,12 +141,9 @@ class Program:
         while stk: stk, i = stk.next, i+1
         return i
 
-    def mmx(self, state, char):
-        return (state.solver.min(char), state.solver.max(char))
-
     def range_at(self, state, at):
         c = self.arg1a[at]
-        return self.mmx(state, c)
+        return mmx(state, c)
 
     def is_it(self, sg, stack_depth):
         if self.is_successful(sg.state):
@@ -193,7 +211,7 @@ class Program:
         return state, states
 
     def get_char_range(self, state):
-        return [self.mmx(state, c) for c in self.arg1a]
+        return [mmx(state, c) for c in self.arg1a]
 
     def next_step(self, state):
         while True:
@@ -268,6 +286,12 @@ def undo_last_constraint(constraint_range, pos, refuse_range):
     refuse_range[pos].append(last)
     return constraint_range
 
+def find_return_fn(prog, state, st_size):
+    sd = prog.stack_depth(state)
+    if sd < st_size:
+        return True
+    return False
+
 def main(exe, out):
     status, state = None, None
     constraint_range = []
@@ -278,8 +302,14 @@ def main(exe, out):
     while inp_len < Max_Input_Len:
         print("INPUT_LEN: %d" % inp_len)
         print "Applying constraint:<%s>" % constraint_to_chr(constraint_range, I.RANGE)
-        prog.update(inp_len, constraint_range, checked_constraints)
-        status, state = prog.gen_chains(prog.initial_state)
+        old_state = prog.update(inp_len, constraint_range, checked_constraints)
+        sdepth = prog.stack_depth(old_state)
+        prog.stack_trace(old_state)
+
+        if sdepth > 10:
+            prog.simgr.explore(find=lambda st: find_return_fn(prog, st, sdepth))
+            old_state = prog.simgr.found[0]
+        status, state = prog.gen_chains(old_state)
         if status == R.SUCCESS:
             val = constraint_to_chr(prog.get_char_range(state), I.MIN)
             print "SUCCESS: %s" % repr(val)
@@ -287,6 +317,15 @@ def main(exe, out):
             out.flush()
             return
         elif status == R.NO_STATES:
+            assert state != prog.success_fn
+            prog.simgr = prog.project.factory.simulation_manager(state)
+            v = prog.simgr.explore(find=lambda st: st.addr == prog.success_fn, n=1000)
+            if v.found:
+                print "==============="
+                for s in v.found:
+                    prog.stack_trace(s)
+                    print "FOUND: %s" % repr(constraint_to_chr(prog.get_char_range(s), I.MIN))
+                return
             # all except the last zero termination.
             # Note that since we are passing zero termination condition
             # separately, the prog.arg1a[-1] will be 0,0.

@@ -160,7 +160,7 @@ double ParseAtom(ExprEval* self, EVAL_CHAR** expr) {
     return negative ? -res : res;
 }
 
-void success(float res) {
+void my_success(float res) {
     printf("done\n");
     exit(0);
 }
@@ -178,7 +178,7 @@ int main(int argc, char* argv[]) {
     double res = Eval(&eval, &expr);
     //printf("<%s>", expr);
     if(GetErr(&eval) == EEE_NO_ERROR) {
-        success(res);
+        my_success(res);
         return 0;
     } else {
         return 1;

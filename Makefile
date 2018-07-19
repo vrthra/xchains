@@ -7,9 +7,9 @@ bin/%: subjects/%.c
 
 Q=2>err
 R:=0
-MAX_INPUT:=10
+MAX_INPUT:=100
 MIN_INPUT:=0
-SUCCESS_FN:=success
+SUCCESS_FN:=my_success
 
 run.%: bin/%
 	python src/xchains.py $< $(Q)
