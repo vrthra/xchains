@@ -40,7 +40,7 @@ double ParseFactors(ExprEval* self, EVAL_CHAR** expr) {
         EVAL_CHAR* pos = *expr;
         if(op != '/' && op != '*')
             return num1;
-        expr++;
+        (*expr)++;
         double num2 = ParseAtom(self, expr);
         assert(self->_err == EEE_NO_ERROR);
         // Perform the saved operation
