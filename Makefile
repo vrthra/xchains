@@ -1,9 +1,10 @@
 .EXPORT_ALL_VARIABLES:
 
-bin/%: subjects/%.c
+bin/%: subjects/%.c | bin
 	gcc -o bin/$* -g subjects/$*.c
 	@nm bin/$* | grep success
 
+bin:; mkdir -p bin
 
 Q=2>err
 R:=0
