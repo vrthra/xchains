@@ -33,7 +33,6 @@ double ParseFactors(ExprEval* self, EVAL_CHAR** expr);
 // Parse multiplication and division
 double ParseFactors(ExprEval* self, EVAL_CHAR** expr) {
     double num1 = ParseAtom(self, expr);
-    assert(self->_err == EEE_NO_ERROR);
     for(;;) {
         // Save the operation and position
         EVAL_CHAR op = **expr;
@@ -42,11 +41,11 @@ double ParseFactors(ExprEval* self, EVAL_CHAR** expr) {
             return num1;
         (*expr)++;
         double num2 = ParseAtom(self, expr);
-        assert(self->_err == EEE_NO_ERROR);
         // Perform the saved operation
         if(op == '/') {
             // Handle division by zero
             if(num2 == 0) {
+                assert(0);
                 self->_err = EEE_DIVIDE_BY_ZERO;
                 self->_err_pos = pos;
                 return 0;
@@ -60,14 +59,12 @@ double ParseFactors(ExprEval* self, EVAL_CHAR** expr) {
 // Parse addition and subtraction
 double ParseSummands(ExprEval* self, EVAL_CHAR** expr) {
     double num1 = ParseFactors(self, expr);
-      assert(self->_err == EEE_NO_ERROR);
     for(;;) {
         EVAL_CHAR op = **expr;
         if(op != '-' && op != '+')
             return num1;
         (*expr)++;
         double num2 = ParseFactors(self, expr);
-        assert(self->_err == EEE_NO_ERROR);
         if(op == '-')
             num1 -= num2;
         else
@@ -85,6 +82,7 @@ double Eval(ExprEval* self, EVAL_CHAR** expr) {
         return 0;
     }
     if(**expr != '\0') {
+        assert(0);
         self->_err = EEE_WRONG_CHAR;
         self->_err_pos = *expr;
         return 0;
@@ -116,9 +114,9 @@ double ParseAtom(ExprEval* self, EVAL_CHAR** expr) {
         (*expr)++;
         self->_paren_count++;
         double res = ParseSummands(self, expr);
-        assert(self->_err == EEE_NO_ERROR);
         if(**expr != ')') {
             // Unmatched opening parenthesis
+            assert(0);
             self->_err = EEE_PARENTHESIS;
             self->_err_pos = *expr;
             return 0;
@@ -149,6 +147,7 @@ double ParseAtom(ExprEval* self, EVAL_CHAR** expr) {
     // double res = strtod(expr, &end_ptr);
     if(end_ptr == *expr) {
         // Report error
+        assert(0);
         self->_err = EEE_WRONG_CHAR;
         self->_err_pos = *expr;
         return 0;
