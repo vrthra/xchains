@@ -226,6 +226,34 @@ class Program:
             except angr.errors.SimUnsatError, ue:
                 embed(globals(), locals())
 
+    def did_constraints_change(self, pstate, state):
+        # was there a change in constraints?
+        parent_ranges = self.get_char_range(pstate)
+        current_ranges = self.get_char_range(state)
+
+        pval = constraint_to_chr(parent_ranges, I.RANGE)
+        val = constraint_to_chr(current_ranges, I.RANGE)
+        print "> %s" % repr(val)
+
+        for i, (p, c) in enumerate(zip(parent_ranges, current_ranges)):
+            if i < self.input_len-1:
+                #if p != c:
+                #    embed(globals(), locals())
+                pass
+            else:
+                if p != c:
+                    assert p[_min] <= c[_min] and p[_max] >= c[_max]
+                    #if it is printable,
+                    # commit here
+                    if c[_min] != c[_max]:
+                        log("@%d [%s-%s]" % (i, repr(chr(c[_min])), repr(chr(c[_max]))))
+                    else:
+                        log("@%d [%s]" % (i, chr(c[_min])))
+                    if printable(c): return True
+                else:
+                    pass
+                    # log("drop [%s-%s]" % (repr(chr(c[_min])), repr(chr(c[_max]))))
+
     def gen_chains(self, state):
         states = []
         while True:
@@ -237,39 +265,14 @@ class Program:
             else:
                 (pstate, state), ss = self.choose_a_successor_state(pstate, my_succ)
                 states.extend(ss)
-
-            # was there a change in constraints?
-            parent_ranges = self.get_char_range(pstate)
-            current_ranges = self.get_char_range(state)
-
-            pval = constraint_to_chr(parent_ranges, I.RANGE)
-            val = constraint_to_chr(current_ranges, I.RANGE)
-            print "> %s" % repr(val)
-
-            for i, (p, c) in enumerate(zip(parent_ranges, current_ranges)):
-                if i < self.input_len-1:
-                    #if p != c:
-                    #    embed(globals(), locals())
-                    pass
-                else:
-                    if p != c:
-                        assert p[_min] <= c[_min] and p[_max] >= c[_max]
-                        #if it is printable,
-                        # commit here
-                        if printable(c):
-                            states = []
-                        if c[_min] != c[_max]:
-                            log("@%d [%s-%s]" % (i, repr(chr(c[_min])), repr(chr(c[_max]))))
-                        else:
-                            log("@%d [%s]" % (i, chr(c[_min])))
-                        break
-                    else: pass
-                        # log("drop [%s-%s]" % (repr(chr(c[_min])), repr(chr(c[_max]))))
+            if self.did_constraints_change(pstate, state):
+                states = []
 
 def unconstrained(v): return v[_min] == 0  and v[_max] == 255
 def noz_unconstrained(v): return v[_min] == 1  and v[_max] == 255
 def EOF(v): return v[_min] == v[_max] and v[_max] == 0
 def printable(v): return v[_min] > 31 and v[_max] < 127
+def constrained(v): return v[_min] > 1 or v[_max] < 255
 
 import pudb; 
 import bdb;
