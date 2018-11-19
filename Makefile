@@ -12,4 +12,4 @@ MIN_INPUT:=0
 SUCCESS_FN:=success
 
 run.%: bin/%
-	python src/xchains.py $< $(Q)
+	python3 src/xchains.py $< $(Q)
