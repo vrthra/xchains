@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from functools import reduce
 import sys
 import os
 import time
@@ -136,7 +137,7 @@ class Program:
         if 'cfg' not in self.__dict__:
             self.cfg = self.project.analyses.CFG(fail_fast=True)
         functions = self.cfg.kb.functions
-        found = [addr for addr,f in functions.iteritems() if fname == f.name]
+        found = [addr for addr,f in functions.items() if fname == f.name]
         assert len(found) == 1, "No address found for function : %s" % fname
         return found[0]
 
@@ -249,7 +250,7 @@ class Program:
         if not GC: return states
         if not Closing_Strip: return states
         if len(states) > Closing_Buffer:
-            print "start stripping from:", len(states)
+            print("start stripping from:", len(states))
             # strip out all but best 100
             ss = sorted([(self.stack_depth(s), i) for i, s in enumerate(states)])
             ss = ss[0:Closing_Buffer]
@@ -323,7 +324,7 @@ class Program:
                         # the constraint added was not one on the input character
                         # hence we ignore.
                         w("x]")
-            except angr.errors.SimUnsatError, ue:
+            except angr.errors.SimUnsatError as ue:
                 log('unsat.. %s' % str(ue))
                 if not states: return ('no_states', None)
                 state, states = self.choose_a_previous_path(states)
@@ -364,11 +365,11 @@ def main(exe):
     with open("results.txt", "w+") as f:
         while True:
             status, state = prog.gen_chains()
-            print status
+            print(status)
             prog.print_args(state)
             if status == 'success':
                 prog.update_checked_idx()
-                print >>f, "<%s>" % repr(prog.get_args(state))
+                print("<%s>" % repr(prog.get_args(state)), file=f)
                 if Show_Range:
                     minval = []
                     maxval = []
@@ -377,13 +378,13 @@ def main(exe):
                         x, y = state.solver.min(c), state.solver.max(c)
                         minval.append(chr(x))
                         maxval.append(chr(y))
-                    print >>f, "min:", repr("".join(minval))
-                    print >>f, "max:", repr("".join(maxval))
+                    print("min:", repr("".join(minval)), file=f)
+                    print("max:", repr("".join(maxval)), file=f)
                 # print >>f, "\t (%s)" % repr(i[0:prog.last_char_checked+1])
                 f.flush()
             log("remaining: %d" % len(prog.states))
             if not prog.states:
-                print "No more states extra_states:", len(prog.extra_states)
+                print("No more states extra_states:", len(prog.extra_states))
                 break
             prog.state = prog.states.pop()
 
