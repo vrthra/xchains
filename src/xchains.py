@@ -348,7 +348,7 @@ class Program:
 
     def get_args(self, state):
         #return state.solver.eval(self.arg1, cast_to=str)[0:self.last_char_checked+1]
-        val = state.solver.eval(self.arg1, cast_to=str)
+        val = state.solver.eval(self.arg1, cast_to=bytes)
         for i in range(len(val)):
             if val[i] == '\x00':
                 return val[0:i]
